@@ -8,6 +8,36 @@
 
 #define dout_subsys ceph_subsys_rgw
 
+constexpr static std::array<ceph_subsys_item_t, ceph_subsys_get_num()>
+test_ceph_subsys_get_as_array() {
+#define SUBSYS(name, log, gather) \
+  ceph_subsys_item_t{ #name, log, gather },
+#define DEFAULT_SUBSYS(log, gather) \
+  ceph_subsys_item_t{ "none", log, gather },
+
+  return {
+#include "common/subsys.h"
+  };
+#undef SUBSYS
+#undef DEFAULT_SUBSYS
+}
+
+static std::array<ceph_subsys_item_t, ceph_subsys_get_num()> __my_arr_ = {
+#define SUBSYS(name, log, gather) \
+  ceph_subsys_item_t{ #name, log, gather },
+#define DEFAULT_SUBSYS(log, gather) \
+  ceph_subsys_item_t{ "none", log, gather },
+
+  {
+#include "common/subsys.h"
+  }
+#undef SUBSYS
+#undef DEFAULT_SUBSYS
+};
+
+static struct ceph_subsys_item_t  *__first=&ceph_subsys_get_as_array().at(0);
+static struct ceph_subsys_item_t  *__second=&test_ceph_subsys_get_as_array().at(0);
+
 
 int ObjectCache::get(const string& name, ObjectCacheInfo& info, uint32_t mask, rgw_cache_entry_info *cache_info)
 {
@@ -73,9 +103,11 @@ int ObjectCache::get(const string& name, ObjectCacheInfo& info, uint32_t mask, r
     if(perfcounter) perfcounter->inc(l_rgw_cache_miss);
     return -ENOENT;
   }
-  ldout(cct, 10) << "cache get: name=" << name << " : hit (requested=0x"
-                 << std::hex << mask << ", cached=0x" << src.flags
-                 << std::dec << ")" << dendl;
+  //int i=0;for(i=0;i<100;i++){ ceph_subsys_get_max_default_level(38); } 
+  static int i=0;i++;
+  ldout(cct, 1) << "cache get: name=" << "name" << " : hit (requested=0x"
+               << std::hex << mask << ", cached=0x" << src.flags
+               << std::dec << ")" << dendl;
 
   info = src;
   if (cache_info) {

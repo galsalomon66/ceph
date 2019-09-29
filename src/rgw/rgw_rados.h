@@ -27,6 +27,7 @@
 #include "rgw_sync_module.h"
 #include "rgw_sync_log_trim.h"
 #include "rgw_service.h"
+#include "rgw_stl_alloc.h"
 
 #include "services/svc_rados.h"
 #include "services/svc_zone.h"
@@ -49,6 +50,9 @@ class RGWReshard;
 class RGWReshardWait;
 
 class RGWSysObjectCtx;
+using namespace RGW_allocator;
+//typedef map<int, struct rgw_cls_list_ret ,less<int>, ChunkAllocator< pair<const int, struct rgw_cls_list_ret >   > > rgw_cls_list_ret_map_t;
+typedef map<string, struct rgw_bucket_dir_entry ,less<string>, ChunkAllocator< pair<const string, struct rgw_bucket_dir_entry >   > > rgw_bucket_dir_entry_map_t;
 
 /* flags for put_obj_meta() */
 #define PUT_OBJ_CREATE      0x01
@@ -1182,6 +1186,7 @@ class RGWRados : public AdminSocketHook
       "cache zap: erase all elements from cache" }
   };
 
+
   /** Open the pool used as root for this gateway */
   int open_root_pool_ctx();
   int open_gc_pool_ctx();
@@ -1202,7 +1207,7 @@ class RGWRados : public AdminSocketHook
       map<int, string>& bucket_objs, int shard_id = -1, map<int, string> *bucket_instance_ids = NULL);
   template<typename T>
   int open_bucket_index(const RGWBucketInfo& bucket_info, librados::IoCtx& index_ctx,
-                        map<int, string>& oids, map<int, T>& bucket_objs,
+                        map<int, string>& oids, map<int, T  >& bucket_objs,
                         int shard_id = -1, map<int, string> *bucket_instance_ids = NULL);
   void build_bucket_index_marker(const string& shard_id_str, const string& shard_marker,
       string *marker);
@@ -2179,6 +2184,7 @@ protected:
   void call_zap();
 public:
 
+
   int get_bucket_info(RGWSysObjectCtx& obj_ctx,
 		      const string& tenant_name, const string& bucket_name,
 		      RGWBucketInfo& info,
@@ -2208,7 +2214,8 @@ public:
 			      const rgw_obj_index_key& start,
 			      const string& prefix,
 			      uint32_t num_entries, bool list_versions,
-			      map<string, rgw_bucket_dir_entry>& m,
+			      //map<string, rgw_bucket_dir_entry>& m,
+			      rgw_bucket_dir_entry_map_t &m,
 			      bool *is_truncated,
 			      rgw_obj_index_key *last_entry,
 			      bool (*force_check_filter)(const string& name) = nullptr);

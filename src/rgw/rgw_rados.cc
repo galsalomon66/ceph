@@ -2501,7 +2501,8 @@ int RGWRados::Bucket::List::list_objects_ordered(
 		     << "[" << cur_marker.instance << "]"
 		     << dendl;
     }
-    std::map<string, rgw_bucket_dir_entry> ent_map;
+    //std::map<string, rgw_bucket_dir_entry> ent_map;
+    rgw_bucket_dir_entry_map_t ent_map;
     int r = store->cls_bucket_list_ordered(target->get_bucket_info(),
 					   shard_id,
 					   cur_marker,
@@ -5319,6 +5320,7 @@ static void accumulate_raw_stats(const rgw_bucket_dir_header& header,
   }
 }
 
+
 int RGWRados::bucket_check_index(RGWBucketInfo& bucket_info,
 				 map<RGWObjCategory, RGWStorageStats> *existing_stats,
 				 map<RGWObjCategory, RGWStorageStats> *calculated_stats)
@@ -5328,6 +5330,7 @@ int RGWRados::bucket_check_index(RGWBucketInfo& bucket_info,
   // value - bucket index check OP returned result with the given bucket index object (shard)
   map<int, string> oids;
   map<int, struct rgw_cls_check_index_ret> bucket_objs_ret;
+  //my_map bucket_objs_ret;
 
   int ret = open_bucket_index(bucket_info, index_ctx, oids, bucket_objs_ret);
   if (ret < 0) {
@@ -9101,7 +9104,8 @@ int RGWRados::cls_bucket_list_ordered(RGWBucketInfo& bucket_info,
 				      const string& prefix,
 				      uint32_t num_entries,
 				      bool list_versions,
-				      map<string, rgw_bucket_dir_entry>& m,
+				      //map<string, rgw_bucket_dir_entry>& m,
+				      rgw_bucket_dir_entry_map_t &m,
 				      bool *is_truncated,
 				      rgw_obj_index_key *last_entry,
 				      bool (*force_check_filter)(const string& name))
@@ -9115,7 +9119,8 @@ int RGWRados::cls_bucket_list_ordered(RGWBucketInfo& bucket_info,
   // value - list result for the corresponding oid (shard), it is filled by
   //         the AIO callback
   map<int, string> oids;
-  map<int, struct rgw_cls_list_ret> list_results;
+  //map<int, struct rgw_cls_list_ret> list_results;
+  rgw_cls_list_ret_map_t list_results;
   int r = open_bucket_index(bucket_info, index_ctx, oids, shard_id);
   if (r < 0)
     return r;

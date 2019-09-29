@@ -6148,7 +6148,8 @@ next:
     formatter->dump_string("bucket", bucket_name);
     formatter->open_array_section("objects");
     while (is_truncated) {
-      map<string, rgw_bucket_dir_entry> result;
+      //map<string, rgw_bucket_dir_entry> result;
+      rgw_bucket_dir_entry_map_t result;
       int r =
 	store->cls_bucket_list_ordered(bucket_info, RGW_NO_SHARD, marker,
 				       prefix, 1000, true,

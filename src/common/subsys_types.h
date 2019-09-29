@@ -55,9 +55,11 @@ ceph_subsys_get_as_array() {
 
 constexpr static std::uint8_t
 ceph_subsys_get_max_default_level(const std::size_t subidx) {
-  const auto item = ceph_subsys_get_as_array()[subidx];
+  const auto item = ceph_subsys_get_as_array().at(subidx);
   return std::max(item.log_level, item.gather_level);
 }
+
+static struct ceph_subsys_item_t  *_first=&ceph_subsys_get_as_array().at(0);
 
 // Compile time-capable version of std::strlen. Resorting to own
 // implementation only because C++17 doesn't mandate constexpr

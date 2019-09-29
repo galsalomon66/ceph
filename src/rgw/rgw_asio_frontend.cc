@@ -79,6 +79,13 @@ class StreamIO : public rgw::asio::ClientIO {
 };
 
 using SharedMutex = ceph::async::SharedMutex<boost::asio::io_context::executor_type>;
+uint64_t rdtsc(){
+unsigned int lo,hi;
+__asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+        return ((uint64_t)hi << 32) | lo;
+}
+static FILE *_fp_process_count = 0;
+
 
 template <typename Stream>
 void handle_connection(RGWProcessEnv& env, Stream& stream,
@@ -139,6 +146,7 @@ void handle_connection(RGWProcessEnv& env, Stream& stream,
       }
 
       // process the request
+      if (_fp_process_count==0){_fp_process_count=fopen("/tmp/request_count","w");}
       RGWRequest req{env.store->get_new_req_id()};
 
       auto& socket = stream.lowest_layer();
@@ -153,8 +161,11 @@ void handle_connection(RGWProcessEnv& env, Stream& stream,
                                     &real_client))));
       RGWRestfulIO client(cct, &real_client_io);
       auto y = optional_yield{socket.get_io_context(), yield};
+      
+      uint64_t _st_t1 = rdtsc();
       process_request(env.store, env.rest, &req, env.uri_prefix,
                       *env.auth_registry, &client, env.olog, y, scheduler);
+      fprintf(_fp_process_count,"%ld %ld\n",pthread_self(),rdtsc() - _st_t1);fflush(_fp_process_count);
     }
 
     if (!parser.keep_alive()) {
@@ -555,9 +566,13 @@ int AsioFrontend::init_ssl()
   return 0;
 }
 #endif // WITH_RADOSGW_BEAST_OPENSSL
-
+static FILE * __fp_handle_connection = 0;
+#define __TIMER( cmd ) {uint64_t __st = rdtsc(); cmd ; fprintf(__fp_handle_connection,"%ld %ld\n",pthread_self(),rdtsc() - __st );fflush(__fp_handle_connection);}
 void AsioFrontend::accept(Listener& l, boost::system::error_code ec)
 {
+
+  if (__fp_handle_connection == 0) {__fp_handle_connection = fopen("/tmp/handle_connection","w");}
+
   if (!l.acceptor.is_open()) {
     return;
   } else if (ec == boost::asio::error::operation_aborted) {
@@ -572,6 +587,8 @@ void AsioFrontend::accept(Listener& l, boost::system::error_code ec)
                           [this, &l] (boost::system::error_code ec) {
                             accept(l, ec);
                           });
+static constexpr size_t cr_stack_size = 1048576; // override default 128k
+const boost::coroutines::attributes cr_attributes{cr_stack_size};
 
   // spawn a coroutine to handle the connection
 #ifdef WITH_RADOSGW_BEAST_OPENSSL
@@ -592,13 +609,14 @@ void AsioFrontend::accept(Listener& l, boost::system::error_code ec)
           return;
         }
         buffer.consume(bytes);
-        handle_connection(env, stream, buffer, true, pause_mutex,
-                          scheduler.get(), ec, yield);
+        __TIMER( handle_connection(env, stream, buffer, true, pause_mutex,
+                          scheduler.get(), ec, yield); );
         if (!ec) {
           // ssl shutdown (ignoring errors)
           stream.async_shutdown(yield[ec]);
         }
         s.shutdown(tcp::socket::shutdown_both, ec);
+      //}, cr_attributes);
       });
   } else {
 #else
@@ -610,9 +628,10 @@ void AsioFrontend::accept(Listener& l, boost::system::error_code ec)
         auto c = connections.add(conn);
         boost::beast::flat_buffer buffer;
         boost::system::error_code ec;
-        handle_connection(env, s, buffer, false, pause_mutex,
-                          scheduler.get(), ec, yield);
+        __TIMER( handle_connection(env, s, buffer, false, pause_mutex,
+                          scheduler.get(), ec, yield) );
         s.shutdown(tcp::socket::shutdown_both, ec);
+      //}, cr_attributes);
       });
   }
 }

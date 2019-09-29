@@ -157,6 +157,14 @@ namespace rgw {
     delete req;
   } /* handle_request */
 
+#include <sys/types.h>
+uint64_t rdtsc(){
+unsigned int lo,hi;
+__asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+        return ((uint64_t)hi << 32) | lo;
+}
+static FILE *_fp_process_count = 0;
+
   int RGWLibProcess::process_request(RGWLibRequest* req)
   {
     // XXX move RGWLibIO and timing setup into process_request
@@ -167,11 +175,16 @@ namespace rgw {
 
     RGWLibIO io_ctx;
 
+    //uint64_t _st_t1 = rdtsc();
+
+    //if(_fp_process_count == 0){_fp_process_count=fopen("/tmp/requset_count","w");}
+
     int ret = process_request(req, &io_ctx);
     if (ret < 0) {
       /* we don't really care about return code */
       dout(20) << "process_request() returned " << ret << dendl;
     }
+    //fprintf(_fp_process_count,"%ld %ld\n",pthread_self(),rdtsc() - _st_t1);
     return ret;
   } /* process_request */
 

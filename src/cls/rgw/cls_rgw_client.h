@@ -402,13 +402,17 @@ int cls_rgw_clear_olh(librados::IoCtx& io_ctx, librados::ObjectWriteOperation& o
  *
  * Return 0 on success, a failure code otherwise.
 */
+#include "../rgw/rgw_stl_alloc.h"
+using namespace RGW_allocator;
+typedef map<int, struct rgw_cls_list_ret ,less<int>, ChunkAllocator< pair<const int, struct rgw_cls_list_ret >   > > rgw_cls_list_ret_map_t;
 
 class CLSRGWIssueBucketList : public CLSRGWConcurrentIO {
   cls_rgw_obj_key start_obj;
   string filter_prefix;
   uint32_t num_entries;
   bool list_versions;
-  map<int, rgw_cls_list_ret>& result;
+  //map<int, rgw_cls_list_ret>& result;
+  rgw_cls_list_ret_map_t &result;
 protected:
   int issue_op(int shard_id, const string& oid) override;
 public:
@@ -416,7 +420,8 @@ public:
                         const string& _filter_prefix, uint32_t _num_entries,
                         bool _list_versions,
                         map<int, string>& oids,
-                        map<int, rgw_cls_list_ret>& list_results,
+                        //map<int, rgw_cls_list_ret>& list_results,
+                        rgw_cls_list_ret_map_t & list_results,
                         uint32_t max_aio) :
   CLSRGWConcurrentIO(io_ctx, oids, max_aio),
   start_obj(_start_obj), filter_prefix(_filter_prefix), num_entries(_num_entries), list_versions(_list_versions), result(list_results) {}
