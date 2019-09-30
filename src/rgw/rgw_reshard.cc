@@ -650,7 +650,8 @@ int RGWBucketReshard::do_reshard(int num_shards,
 int RGWBucketReshard::get_status(list<cls_rgw_bucket_instance_entry> *status)
 {
   librados::IoCtx index_ctx;
-  map<int, string> bucket_objs;
+  //map<int, string> bucket_objs;
+  map_oid_t bucket_objs;
 
   int r = store->open_bucket_index(bucket_info, index_ctx, bucket_objs);
   if (r < 0) {

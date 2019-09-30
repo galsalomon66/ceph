@@ -59,7 +59,8 @@ void BucketIndexAioManager::do_completion(int id) {
 }
 
 bool BucketIndexAioManager::wait_for_completions(int valid_ret_code,
-    int *num_completions, int *ret_code, map<int, string> *objs) {
+    //int *num_completions, int *ret_code, map<int, string> *objs) {
+    int *num_completions, int *ret_code,map_oid_t *objs) {
   lock.Lock();
   if (pendings.empty() && completions.empty()) {
     lock.Unlock();

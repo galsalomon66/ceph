@@ -53,6 +53,7 @@ class RGWSysObjectCtx;
 using namespace RGW_allocator;
 //typedef map<int, struct rgw_cls_list_ret ,less<int>, ChunkAllocator< pair<const int, struct rgw_cls_list_ret >   > > rgw_cls_list_ret_map_t;
 typedef map<string, struct rgw_bucket_dir_entry ,less<string>, ChunkAllocator< pair<const string, struct rgw_bucket_dir_entry >   > > rgw_bucket_dir_entry_map_t;
+typedef map<int, string,less<int>, ChunkAllocator< pair<const int, string>   > > map_oid_t;
 
 /* flags for put_obj_meta() */
 #define PUT_OBJ_CREATE      0x01
@@ -1202,10 +1203,12 @@ class RGWRados : public AdminSocketHook
   int open_bucket_index_shard(const RGWBucketInfo& bucket_info, librados::IoCtx& index_ctx,
                               int shard_id, string *bucket_obj);
   int open_bucket_index(const RGWBucketInfo& bucket_info, librados::IoCtx& index_ctx,
-      map<int, string>& bucket_objs, int shard_id = -1, map<int, string> *bucket_instance_ids = NULL);
+      //map<int, string>& bucket_objs, int shard_id = -1, map<int, string> *bucket_instance_ids = NULL);
+      map_oid_t& bucket_objs, int shard_id = -1, map<int, string> *bucket_instance_ids = NULL);
   template<typename T>
   int open_bucket_index(const RGWBucketInfo& bucket_info, librados::IoCtx& index_ctx,
-                        map<int, string>& oids, map<int, T>& bucket_objs,
+                        //map<int, string>& oids, map<int, T>& bucket_objs,
+                        map_oid_t& oids, map<int, T>& bucket_objs,
                         int shard_id = -1, map<int, string> *bucket_instance_ids = NULL);
   void build_bucket_index_marker(const string& shard_id_str, const string& shard_marker,
       string *marker);
@@ -2386,7 +2389,8 @@ public:
    * bucket_objs [out] - filled by this method, a list of bucket index objects.
    */
   void get_bucket_index_objects(const string& bucket_oid_base, uint32_t num_shards,
-      map<int, string>& bucket_objs, int shard_id = -1);
+      //map<int, string>& bucket_objs, int shard_id = -1);
+      map_oid_t& bucket_objs, int shard_id = -1);
 
   /**
    * Get the bucket index object with the given base bucket index object and object key,
