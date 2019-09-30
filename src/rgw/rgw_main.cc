@@ -169,6 +169,9 @@ static RGWRESTMgr *rest_filter(RGWRados *store, int dialect, RGWRESTMgr *orig)
  */
 int main(int argc, const char **argv)
 {
+  //void * __poll_my_fifo(void *arg);
+  
+  //{pthread_t th1;pthread_create(&th1,0,__poll_my_fifo,0);}
   // dout() messages will be sent to stderr, but FCGX wants messages on stdout
   // Redirect stderr to stdout.
   TEMP_FAILURE_RETRY(close(STDERR_FILENO));
@@ -602,3 +605,339 @@ int main(int argc, const char **argv)
 
   return 0;
 }
+
+static int _s_malloc_loop = 0;
+static int _s_dont_count = 0;
+#define MY_FIFO_FILE "/tmp/my_fifo"
+
+void * __start(void *arg)
+{
+        static int first_time=1;
+        static FILE * info_out=0;
+
+        if(first_time)
+        {
+                info_out=fopen("/tmp/malloc_info.txt","w");
+                if (info_out<0) return 0;
+
+                first_time=0;
+        }
+
+        int i=0;
+        while(1){
+        fprintf(info_out,"======== %d ============\n",i++);fflush(info_out);
+        malloc_info(0,info_out);fflush(info_out);
+        sleep(15);
+        }
+
+}
+
+#define TEMP_DATA_SGMT_SZ (1024*512)
+
+static unsigned long long g_num_of_alloc_per_size[ 64 ];
+static char __temp_data_seg[ TEMP_DATA_SGMT_SZ ];
+static int __data_seg_ptr=0;
+#define ALLIGN_SZ unsigned long long
+
+/**********************/
+void * temp_malloc(size_t xi_size)
+{//provide allocation until libc_malloc is loaded via dlsym
+	char * res;
+
+	if ( (__data_seg_ptr + xi_size) > TEMP_DATA_SGMT_SZ ) {fprintf(stderr," === %ld ====\n",__data_seg_ptr + xi_size);fputs("initial allocation is too big. abort.\n",stderr);exit(-1);}
+
+	res = &__temp_data_seg[ __data_seg_ptr ];
+	__data_seg_ptr += xi_size;
+	__data_seg_ptr +=sizeof(ALLIGN_SZ) - (xi_size % sizeof(ALLIGN_SZ) );
+	//printf("malloc = %p __data_seg_ptr + %d\n",res,__data_seg_ptr);
+	return res;
+}
+
+/**********************/
+#include <dlfcn.h>
+#include <time.h>
+#include <string.h>
+#include <execinfo.h>
+
+static __thread int s_thrd_backtrace_on=0;
+int  g_report_line_seq=0;
+
+static void *(*libc_malloc)(size_t sz)=malloc;
+static void (*libc_free)(void * p)=free;
+
+#define GET_BACTRACE(bt) \
+{ \
+	unsigned int sz; \
+	char **sym; \
+	void *buffer[128]; \
+	sz = backtrace(buffer,sizeof(buffer)); \
+	sym = backtrace_symbols(buffer,sz); \
+	bt = normalized_bactrace_symbole(sym,sz); \
+	libc_free((char*)sym);  \
+}
+
+#define BACKTRACE_UPON_THRESHOLD_T2(size,sign) \
+{ \
+	if ((s_thrd_backtrace_on==0) ) \
+{char *bt_out; \
+	s_thrd_backtrace_on = 1; \
+	struct timespec ts; \
+	clock_gettime(CLOCK_REALTIME_COARSE, &ts); \
+	GET_BACTRACE(bt_out); \
+	fprintf(__fp,"%lld|%s%lld|%s|%lld.%ld\n", g_report_line_seq++ , # sign , size , bt_out, (long long)ts.tv_sec, ts.tv_nsec ); \
+	fprintf(__fp,"----------------------\n"); \
+	libc_free(bt_out); \
+	s_thrd_backtrace_on = 0; \
+} \
+}
+
+char* normalized_bactrace_symbole(char ** xi_sym,int xi_sz)
+{
+	int i;
+	char *frame_sym[128];
+	unsigned int total_sz =0;
+
+	for(i=0;i<xi_sz;i++)
+	{
+		char *st,*en;
+		frame_sym[i] = 0;
+
+		st = strchr( xi_sym[i] , '(');
+		if (!st) continue;
+
+		en = strchr( st , ')');	
+		if (!en) continue;
+
+		frame_sym[i] = (char*) libc_malloc( en - st  + 2);
+		total_sz += (en - st  + 2);
+
+		strncpy(frame_sym[i],st,en-st+1);
+		frame_sym[i][( en - st + 1 )] = 0;
+
+		//printf("new = %s %s\n",frame_sym[i],xi_sym[i]);
+	}
+
+	char * res = (char*)libc_malloc(total_sz);res[0]=0;
+
+	for(i=0;i<xi_sz;i++)
+	{
+		if (!frame_sym[i]) continue;
+
+		strcat(res,frame_sym[i]);
+		libc_free(frame_sym[i]);
+	}	
+
+	//printf("res = %s\n",res);
+	return res;
+}
+
+void __init_alloc_map()
+{
+	for(uint64_t i=0;i<sizeof(g_num_of_alloc_per_size)/sizeof(g_num_of_alloc_per_size[0]);i++){
+		g_num_of_alloc_per_size[i]=0;
+	}
+}
+
+static FILE *__fp = 0;
+static void print_allocation_per_size()
+{
+	int i;
+	unsigned long long range=1;
+
+	if (!__fp){__fp = fopen("./malloc_info.txt","w");}
+
+	for(i=0;i< 32 ;i++)
+	{
+		//if (trace_mem_fp && g_num_of_alloc_per_size[32-i]) fprintf(trace_mem_fp,"(%d) %lld --> %lld num of allocations %lld\n",i,range/2,range,g_num_of_alloc_per_size[32-i]);
+		if (__fp && g_num_of_alloc_per_size[32-i]) fprintf(__fp,"(%d) %lld --> %lld num of allocations %lld\n",i,range/2,range,g_num_of_alloc_per_size[32-i]);
+
+		range = range << 1;
+	}
+	fprintf(__fp,"===================================\n");
+}
+
+void push_into_map(size_t xi_sz) 
+{ 
+	static int first_time=1;
+	static int __count__ = 0;
+	if(first_time){
+		__init_alloc_map();
+		first_time=0;
+	}
+
+	unsigned long long * x; 
+	unsigned long long int idx = (xi_sz > (unsigned long long int)(1<<31)) ? 31 : __builtin_clz ( xi_sz ) ;
+	x  = &g_num_of_alloc_per_size[ idx ]; 
+	//if(g_backtrace_by_idx && idx == (32-g_backtrace_idx)) {BACKTRACE_UPON_THRESHOLD_T2(xi_sz,+);} 
+	__sync_fetch_and_add( x , 1 ); 
+
+	if ((__count__ % 1000)==0 && (xi_sz>=16 && xi_sz<=64)){BACKTRACE_UPON_THRESHOLD_T2(xi_sz,+);}
+
+	if ((__count__++ % 1000) == 0){
+	  print_allocation_per_size();
+	}
+}
+
+
+static void *(*_libc_malloc)(size_t)=0;
+static void *(*_libc_free)(void*)=0;
+static void *(*_libc_calloc)(size_t nmemb, size_t size) =0;
+static void *(*_libc_realloc)(void *ptr, size_t size) =0;
+
+static int _load_symbol = 0;
+static long long int __malloc_count = 1; //not thread safe
+static long long int __free_count = 1; //not thread safe
+static FILE *_fp_malloc_count = 0;
+static FILE *_fp_free_count = 0;
+uint64_t __total_alloc_time = 0; //not thread safe
+uint64_t __total_free_time = 0; //not thread safe
+
+uint64_t rdtsc(){
+unsigned int lo,hi;
+__asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+        return ((uint64_t)hi << 32) | lo;
+#if 0
+	struct timespec ts; 
+        clock_gettime(CLOCK_REALTIME_COARSE, &ts); 
+	return 	ts.tv_sec * 1000000000 * ts.tv_nsec;
+#endif
+}
+
+
+
+
+void load_malloc_symbol()
+{
+	void * handle=0;
+
+	if (!_load_symbol) _load_symbol=1;
+
+	if ( getenv("_ALLOC") && !strcmp(getenv("_ALLOC") , "t"))
+                {handle=dlopen("/usr/lib64/libtcmalloc.so",RTLD_LAZY);}
+	else
+		handle=dlopen("/lib64/libc.so.6",RTLD_LAZY);
+
+	char * msg = dlerror();
+	if(handle == 0){fputs(msg,stderr);exit(-1);}
+
+	if (dlerror() != 0)
+		{fputs("error while dlerror\n",stderr);fputs(dlerror(),stderr);exit(-1);}
+
+	_libc_malloc = (void* (*)(size_t)) dlsym( handle , "malloc" ) ;
+	_libc_free = (void* (*)(void*))dlsym( handle , "free" );//get libc free symbol
+
+        _libc_calloc = (void* (*)(size_t , size_t))dlsym( handle , "calloc" );
+        _libc_realloc = (void* (*)(void *ptr, size_t size))dlsym( handle , "realloc" );
+        
+	_fp_malloc_count = fopen( "/tmp/malloc_counter" ,"w" );
+	_fp_free_count = fopen( "/tmp/free_counter" ,"w" );
+	fputs("symbol loaded\n",stderr);
+
+}
+
+#if 1
+const char * __malloc_loop_param = "malloc_loop:";
+const char * __dont_count = "dont_count:";
+void * __poll_my_fifo(void*arg)
+{
+
+        unlink( MY_FIFO_FILE );
+
+        if(mkfifo(MY_FIFO_FILE, O_RDWR|O_CREAT|S_IRWXU))
+        {
+                fprintf(stderr,"failed to initiate pipes <%s>\n",strerror(errno));
+		return 0;
+        }
+
+
+        FILE *fp = fopen(MY_FIFO_FILE,"r");
+        if (!fp) return 0;
+
+        char line[100];
+
+        while(1)
+        {
+                if (feof(fp)!=0) {fclose(fp);fp = fopen(MY_FIFO_FILE,"r");}
+
+                fgets(line , sizeof(line) , fp );
+
+                if (strstr(line,__malloc_loop_param) ){
+                        _s_malloc_loop = atoi(line+strlen(__malloc_loop_param)) ;
+                }else if(strstr(line,__dont_count)){
+			_s_dont_count = atoi(line+strlen(__dont_count)) ;
+		}
+        }
+}
+
+void count_and_report()
+{
+//__malloc_count ++;
+       
+        if(_fp_malloc_count && (__malloc_count % 1000) == 0 ){
+        fprintf(_fp_malloc_count,"%llu %llu\n",__malloc_count, __total_alloc_time);fflush(_fp_malloc_count);
+        }
+        if(_fp_free_count && (__free_count % 1000) == 0 ){
+        fprintf(_fp_free_count,"%llu %llu\n",__free_count, __total_free_time);fflush(_fp_free_count);
+        }
+      
+}
+
+#if 0
+void * malloc(size_t xi_sz)
+{
+	if(!_libc_malloc){
+
+		if(!_load_symbol) load_malloc_symbol();
+		return temp_malloc(xi_sz);
+	}
+
+	//if (xi_sz < 1024) xi_sz = 1024;
+
+	//push_into_map(xi_sz);
+
+	if (_s_dont_count) {
+	  return  _libc_malloc(xi_sz);
+	}
+
+	__sync_fetch_and_add(&__malloc_count , 1);
+	count_and_report();
+
+	uint64_t st = rdtsc();
+	for(volatile int i=0;i<_s_malloc_loop;i++);
+	void * res =  _libc_malloc(xi_sz);
+	 __total_alloc_time += (rdtsc() - st);
+
+	return res;
+}
+
+void free(void *xi_ptr)
+{
+	if (!xi_ptr) return; //handle null
+	if((char*)xi_ptr >= &(__temp_data_seg[0]) && (char*)xi_ptr <= &(__temp_data_seg[ TEMP_DATA_SGMT_SZ ])){
+		return;
+	}
+
+	__sync_fetch_and_add(&__free_count , 1);
+	count_and_report();
+	uint64_t st = rdtsc();
+
+	_libc_free( xi_ptr);
+
+	__total_free_time += (rdtsc() - st);
+ 
+}
+
+void *calloc(size_t nmemb, size_t size)
+{
+        if(_libc_calloc) {return _libc_calloc(nmemb,size);} else {return 0;}
+}
+
+void *realloc(void *ptr, size_t size)
+{
+        if(_libc_realloc) {return _libc_realloc(ptr,size);} else {return 0;}
+
+}
+#endif
+
+#endif
+

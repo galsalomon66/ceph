@@ -2,7 +2,7 @@
 
 # abort on failure
 set -e
-
+set -xv
 if [ -n "$VSTART_DEST" ]; then
   SRC_PATH=`dirname $0`
   SRC_PATH=`(cd $SRC_PATH; pwd)`
@@ -128,7 +128,8 @@ if [ `uname` = FreeBSD ]; then
 else
     objectstore="bluestore"
 fi
-rgw_frontend="beast"
+#rgw_frontend="beast"
+rgw_frontend="civetweb"
 rgw_compression=""
 lockdep=${LOCKDEP:-1}
 spdk_enabled=0 #disable SPDK by default
@@ -427,6 +428,7 @@ quoted_print() {
 }
 
 prunb() {
+	echo $(pwd)
     quoted_print "$@" '&'
     "$@" &
 }
@@ -442,15 +444,26 @@ run() {
     eval "valg=\$valgrind_$type"
     [ -z "$valg" ] && valg="$valgrind"
 
+    env_cmd=""
+    unset_env_cmd=""
+
+    if [ "$type" == "rgw" ]; then
+        env_cmd="export LD_PRELOAD=/home/gsalomon/libjemalloc.so.2"
+        #env_cmd="export LD_PRELOAD=/home/gsalomon/libtcmalloc.so"
+        unset_env_cmd="unset LD_PRELOAD"
+    fi
+
     if [ -n "$valg" ]; then
         prunb valgrind --tool="$valg" $valgrind_args "$@" -f
         sleep 1
     else
+	eval ${env_cmd}
         if [ "$nodaemon" -eq 0 ]; then
             prun "$@"
         else
-            prunb ./ceph-run "$@" -f
+            prunb ${CEPH_ROOT}/src/ceph-run "$@" -f
         fi
+	eval ${unset_env_cmd}	
     fi
 }
 

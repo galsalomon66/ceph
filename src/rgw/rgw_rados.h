@@ -27,6 +27,7 @@
 #include "rgw_sync_module.h"
 #include "rgw_sync_log_trim.h"
 #include "rgw_service.h"
+#include "rgw_stl_alloc.h"
 
 #include "services/svc_rados.h"
 #include "services/svc_zone.h"
@@ -49,6 +50,9 @@ class RGWReshard;
 class RGWReshardWait;
 
 class RGWSysObjectCtx;
+using namespace RGW_allocator;
+//typedef map<int, struct rgw_cls_list_ret ,less<int>, ChunkAllocator< pair<const int, struct rgw_cls_list_ret >   > > rgw_cls_list_ret_map_t;
+typedef map<string, struct rgw_bucket_dir_entry ,less<string>, ChunkAllocator< pair<const string, struct rgw_bucket_dir_entry >   > > rgw_bucket_dir_entry_map_t;
 
 /* flags for put_obj_meta() */
 #define PUT_OBJ_CREATE      0x01
@@ -2202,7 +2206,8 @@ public:
 			      const rgw_obj_index_key& start,
 			      const string& prefix,
 			      uint32_t num_entries, bool list_versions,
-			      map<string, rgw_bucket_dir_entry>& m,
+			      //map<string, rgw_bucket_dir_entry>& m,
+			      rgw_bucket_dir_entry_map_t &m,
 			      bool *is_truncated,
 			      rgw_obj_index_key *last_entry,
 			      bool (*force_check_filter)(const string& name) = nullptr);
