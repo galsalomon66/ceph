@@ -31,6 +31,7 @@
 #include "librbd/Journal.h"
 #include "librbd/ObjectMap.h"
 #include "librbd/Operations.h"
+#include "librbd/PluginRegistry.h"
 #include "librbd/Types.h"
 #include "librbd/Utils.h"
 #include "librbd/api/Config.h"
@@ -180,7 +181,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     int obj_order = ictx->order;
     {
       std::shared_lock locker{ictx->image_lock};
-      info.size = ictx->get_image_size(ictx->snap_id);
+      info.size = ictx->get_effective_image_size(ictx->snap_id);
     }
     info.obj_size = 1ULL << obj_order;
     info.num_objs = Striper::get_num_objects(ictx->layout, info.size);
@@ -857,7 +858,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     if (r < 0)
       return r;
     std::shared_lock l2{ictx->image_lock};
-    *size = ictx->get_image_size(ictx->snap_id);
+    *size = ictx->get_effective_image_size(ictx->snap_id);
     return 0;
   }
 
@@ -1575,16 +1576,11 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
   {
     ceph_assert(ceph_mutex_is_locked(ictx->image_lock));
 
-    uint64_t image_size;
-    if (ictx->snap_id == CEPH_NOSNAP) {
-      image_size = ictx->get_image_size(CEPH_NOSNAP);
-    } else {
-      auto snap_info = ictx->get_snap_info(ictx->snap_id);
-      if (snap_info == nullptr) {
-	return -ENOENT;
-      }
-      image_size = snap_info->size;
+    if (ictx->snap_id != CEPH_NOSNAP &&
+        ictx->get_snap_info(ictx->snap_id) == nullptr) {
+      return -ENOENT;
     }
+    uint64_t image_size = ictx->get_effective_image_size(ictx->snap_id);
 
     // special-case "len == 0" requests: always valid
     if (*len == 0)
@@ -1629,7 +1625,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
          !ictx->exclusive_lock->is_lock_owner()) &&
         ictx->test_features(RBD_FEATURE_DIRTY_CACHE)) {
       C_SaferCond ctx3;
-      librbd::cache::util::discard_cache<>(*ictx, &ctx3);
+      ictx->plugin_registry->discard(&ctx3);
       r = ctx3.wait();
     }
     return r;

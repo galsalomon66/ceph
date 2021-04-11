@@ -3,17 +3,17 @@
   "version": "0.0.0",
   "license": "MIT",
   "config": {
-    "locale": "en"
+    "locale": "en-US"
   },
   "scripts": {
     "ng": "ng",
-    "start": "npm run env_build && ng serve --host 0.0.0.0",
+    "start": "npm run env_build && ng serve --host 0.0.0.0 --ssl",
     "build": "npm run env_build && ng build --configuration=$npm_package_config_locale",
     "build:localize": "node cd --env --pre && ng build --localize",
     "postbuild:localize": "node cd --res",
     "env_build": "node cd --env",
     "i18n": "npm run i18n:extract && npm run i18n:push && npm run i18n:pull && npm run i18n:merge",
-    "i18n:extract": "ng xi18n --output-path src/locale --ivy",
+    "i18n:extract": "ng xi18n --output-path src/locale --ivy --progress=false",
     "i18n:push": "npx i18ntool push -c i18n.config.json",
     "i18n:pull": "npx i18ntool pull -c i18n.config.json",
     "i18n:merge": "npx i18ntool merge -c i18n.config.json",
@@ -84,7 +84,6 @@
     "@angular/platform-browser": "10.1.5",
     "@angular/platform-browser-dynamic": "10.1.5",
     "@angular/router": "10.1.5",
-    "@auth0/angular-jwt": "5.0.1",
     "@circlon/angular-tree-component": "10.0.0",
     "@ng-bootstrap/ng-bootstrap": "7.0.0",
     "@swimlane/ngx-datatable": "18.0.0",

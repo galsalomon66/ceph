@@ -67,7 +67,7 @@ rgw_pool RGWZoneGroup::get_pool(CephContext *cct_) const
   return rgw_pool(cct_->_conf->rgw_zonegroup_root_pool);
 }
 
-int RGWZoneGroup::create_default(optional_yield y, bool old_format)
+int RGWZoneGroup::create_default(const DoutPrefixProvider *dpp, optional_yield y, bool old_format)
 {
   name = default_zonegroup_name;
   api_name = default_zonegroup_name;
@@ -82,23 +82,23 @@ int RGWZoneGroup::create_default(optional_yield y, bool old_format)
 
   int r = zone_params.init(cct, sysobj_svc, y, false);
   if (r < 0) {
-    ldout(cct, 0) << "create_default: error initializing zone params: " << cpp_strerror(-r) << dendl;
+    ldpp_dout(dpp, 0) << "create_default: error initializing zone params: " << cpp_strerror(-r) << dendl;
     return r;
   }
 
-  r = zone_params.create_default(y);
+  r = zone_params.create_default(dpp, y);
   if (r < 0 && r != -EEXIST) {
-    ldout(cct, 0) << "create_default: error in create_default  zone params: " << cpp_strerror(-r) << dendl;
+    ldpp_dout(dpp, 0) << "create_default: error in create_default  zone params: " << cpp_strerror(-r) << dendl;
     return r;
   } else if (r == -EEXIST) {
-    ldout(cct, 10) << "zone_params::create_default() returned -EEXIST, we raced with another default zone_params creation" << dendl;
+    ldpp_dout(dpp, 10) << "zone_params::create_default() returned -EEXIST, we raced with another default zone_params creation" << dendl;
     zone_params.clear_id();
     r = zone_params.init(cct, sysobj_svc, y);
     if (r < 0) {
-      ldout(cct, 0) << "create_default: error in init existing zone params: " << cpp_strerror(-r) << dendl;
+      ldpp_dout(dpp, 0) << "create_default: error in init existing zone params: " << cpp_strerror(-r) << dendl;
       return r;
     }
-    ldout(cct, 20) << "zone_params::create_default() " << zone_params.get_name() << " id " << zone_params.get_id()
+    ldpp_dout(dpp, 20) << "zone_params::create_default() " << zone_params.get_name() << " id " << zone_params.get_id()
 		   << dendl;
   }
   
@@ -107,14 +107,14 @@ int RGWZoneGroup::create_default(optional_yield y, bool old_format)
   default_zone.id = zone_params.get_id();
   master_zone = default_zone.id;
   
-  r = create(y);
+  r = create(dpp, y);
   if (r < 0 && r != -EEXIST) {
-    ldout(cct, 0) << "error storing zone group info: " << cpp_strerror(-r) << dendl;
+    ldpp_dout(dpp, 0) << "error storing zone group info: " << cpp_strerror(-r) << dendl;
     return r;
   }
 
   if (r == -EEXIST) {
-    ldout(cct, 10) << "create_default() returned -EEXIST, we raced with another zonegroup creation" << dendl;
+    ldpp_dout(dpp, 10) << "create_default() returned -EEXIST, we raced with another zonegroup creation" << dendl;
     id.clear();
     r = init(cct, sysobj_svc, y);
     if (r < 0) {
@@ -633,17 +633,17 @@ int RGWSystemMetaObj::read(optional_yield y)
   return read_info(id, y);
 }
 
-int RGWSystemMetaObj::create(optional_yield y, bool exclusive)
+int RGWSystemMetaObj::create(const DoutPrefixProvider *dpp, optional_yield y, bool exclusive)
 {
   int ret;
 
   /* check to see the name is not used */
   ret = read_id(name, id, y);
   if (exclusive && ret == 0) {
-    ldout(cct, 10) << "ERROR: name " << name << " already in use for obj id " << id << dendl;
+    ldpp_dout(dpp, 10) << "ERROR: name " << name << " already in use for obj id " << id << dendl;
     return -EEXIST;
   } else if ( ret < 0 && ret != -ENOENT) {
-    ldout(cct, 0) << "failed reading obj id  " << id << ": " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "failed reading obj id  " << id << ": " << cpp_strerror(-ret) << dendl;
     return ret;
   }
 
@@ -658,7 +658,7 @@ int RGWSystemMetaObj::create(optional_yield y, bool exclusive)
 
   ret = store_info(exclusive, y);
   if (ret < 0) {
-    ldout(cct, 0) << "ERROR:  storing info for " << id << ": " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "ERROR:  storing info for " << id << ": " << cpp_strerror(-ret) << dendl;
     return ret;
   }
 
@@ -701,17 +701,17 @@ const string& RGWRealm::get_predefined_name(CephContext *cct) const {
   return cct->_conf->rgw_realm;
 }
 
-int RGWRealm::create(optional_yield y, bool exclusive)
+int RGWRealm::create(const DoutPrefixProvider *dpp, optional_yield y, bool exclusive)
 {
-  int ret = RGWSystemMetaObj::create(y, exclusive);
+  int ret = RGWSystemMetaObj::create(dpp, y, exclusive);
   if (ret < 0) {
-    ldout(cct, 0) << "ERROR creating new realm object " << name << ": " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "ERROR creating new realm object " << name << ": " << cpp_strerror(-ret) << dendl;
     return ret;
   }
   // create the control object for watch/notify
   ret = create_control(exclusive, y);
   if (ret < 0) {
-    ldout(cct, 0) << "ERROR creating control for new realm " << name << ": " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "ERROR creating control for new realm " << name << ": " << cpp_strerror(-ret) << dendl;
     return ret;
   }
   RGWPeriod period;
@@ -721,9 +721,9 @@ int RGWRealm::create(optional_yield y, bool exclusive)
     if (ret < 0 ) {
       return ret;
     }
-    ret = period.create(y, true);
+    ret = period.create(dpp, y, true);
     if (ret < 0) {
-      ldout(cct, 0) << "ERROR: creating new period for realm " << name << ": " << cpp_strerror(-ret) << dendl;
+      ldpp_dout(dpp, 0) << "ERROR: creating new period for realm " << name << ": " << cpp_strerror(-ret) << dendl;
       return ret;
     }
   } else {
@@ -1195,7 +1195,7 @@ int RGWPeriod::read_info(optional_yield y)
   return 0;
 }
 
-int RGWPeriod::create(optional_yield y, bool exclusive)
+int RGWPeriod::create(const DoutPrefixProvider *dpp, optional_yield y, bool exclusive)
 {
   int ret;
   
@@ -1212,13 +1212,13 @@ int RGWPeriod::create(optional_yield y, bool exclusive)
 
   ret = store_info(exclusive, y);
   if (ret < 0) {
-    ldout(cct, 0) << "ERROR:  storing info for " << id << ": " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "ERROR:  storing info for " << id << ": " << cpp_strerror(-ret) << dendl;
     return ret;
   }
 
   ret = set_latest_epoch(y, epoch);
   if (ret < 0) {
-    ldout(cct, 0) << "ERROR: setting latest epoch " << id << ": " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "ERROR: setting latest epoch " << id << ": " << cpp_strerror(-ret) << dendl;
   }
 
   return ret;
@@ -1372,13 +1372,13 @@ static int read_sync_status(rgw::sal::RGWRadosStore *store, rgw_meta_sync_status
   return r;
 }
 
-int RGWPeriod::update_sync_status(rgw::sal::RGWRadosStore *store, /* for now */
+int RGWPeriod::update_sync_status(rgw::sal::RGWStore *store, /* for now */
 				  const RGWPeriod &current_period,
                                   std::ostream& error_stream,
                                   bool force_if_stale)
 {
   rgw_meta_sync_status status;
-  int r = read_sync_status(store, &status);
+  int r = read_sync_status(static_cast<rgw::sal::RGWRadosStore*>(store), &status);
   if (r < 0) {
     ldout(cct, 0) << "period failed to read sync status: "
         << cpp_strerror(-r) << dendl;
@@ -1422,13 +1422,14 @@ int RGWPeriod::update_sync_status(rgw::sal::RGWRadosStore *store, /* for now */
   return 0;
 }
 
-int RGWPeriod::commit(rgw::sal::RGWRadosStore *store,
+int RGWPeriod::commit(const DoutPrefixProvider *dpp,
+		      rgw::sal::RGWStore *store,
 		      RGWRealm& realm, const RGWPeriod& current_period,
                       std::ostream& error_stream, optional_yield y,
 		      bool force_if_stale)
 {
   auto zone_svc = sysobj_svc->get_zone_svc();
-  ldout(cct, 20) << __func__ << " realm " << realm.get_id() << " period " << current_period.get_id() << dendl;
+  ldpp_dout(dpp, 20) << __func__ << " realm " << realm.get_id() << " period " << current_period.get_id() << dendl;
   // gateway must be in the master zone to commit
   if (master_zone != zone_svc->get_zone_params().get_id()) {
     error_stream << "Cannot commit period on zone "
@@ -1458,24 +1459,24 @@ int RGWPeriod::commit(rgw::sal::RGWRadosStore *store,
     // store the current metadata sync status in the period
     int r = update_sync_status(store, current_period, error_stream, force_if_stale);
     if (r < 0) {
-      ldout(cct, 0) << "failed to update metadata sync status: "
+      ldpp_dout(dpp, 0) << "failed to update metadata sync status: "
           << cpp_strerror(-r) << dendl;
       return r;
     }
     // create an object with a new period id
-    r = create(y, true);
+    r = create(dpp, y, true);
     if (r < 0) {
-      ldout(cct, 0) << "failed to create new period: " << cpp_strerror(-r) << dendl;
+      ldpp_dout(dpp, 0) << "failed to create new period: " << cpp_strerror(-r) << dendl;
       return r;
     }
     // set as current period
     r = realm.set_current_period(*this, y);
     if (r < 0) {
-      ldout(cct, 0) << "failed to update realm's current period: "
+      ldpp_dout(dpp, 0) << "failed to update realm's current period: "
           << cpp_strerror(-r) << dendl;
       return r;
     }
-    ldout(cct, 4) << "Promoted to master zone and committed new period "
+    ldpp_dout(dpp, 4) << "Promoted to master zone and committed new period "
         << id << dendl;
     realm.notify_new_period(*this, y);
     return 0;
@@ -1496,7 +1497,7 @@ int RGWPeriod::commit(rgw::sal::RGWRadosStore *store,
   // write the period to rados
   int r = store_info(false, y);
   if (r < 0) {
-    ldout(cct, 0) << "failed to store period: " << cpp_strerror(-r) << dendl;
+    ldpp_dout(dpp, 0) << "failed to store period: " << cpp_strerror(-r) << dendl;
     return r;
   }
   // set as latest epoch
@@ -1506,25 +1507,25 @@ int RGWPeriod::commit(rgw::sal::RGWRadosStore *store,
     return 0;
   }
   if (r < 0) {
-    ldout(cct, 0) << "failed to set latest epoch: " << cpp_strerror(-r) << dendl;
+    ldpp_dout(dpp, 0) << "failed to set latest epoch: " << cpp_strerror(-r) << dendl;
     return r;
   }
   r = reflect(y);
   if (r < 0) {
-    ldout(cct, 0) << "failed to update local objects: " << cpp_strerror(-r) << dendl;
+    ldpp_dout(dpp, 0) << "failed to update local objects: " << cpp_strerror(-r) << dendl;
     return r;
   }
-  ldout(cct, 4) << "Committed new epoch " << epoch
+  ldpp_dout(dpp, 4) << "Committed new epoch " << epoch
       << " for period " << id << dendl;
   realm.notify_new_period(*this, y);
   return 0;
 }
 
-int RGWZoneParams::create_default(optional_yield y, bool old_format)
+int RGWZoneParams::create_default(const DoutPrefixProvider *dpp, optional_yield y, bool old_format)
 {
   name = default_zone_name;
 
-  int r = create(y);
+  int r = create(dpp, y);
   if (r < 0) {
     return r;
   }
@@ -1662,15 +1663,15 @@ int RGWZoneParams::fix_pool_names(optional_yield y)
   return 0;
 }
 
-int RGWZoneParams::create(optional_yield y, bool exclusive)
+int RGWZoneParams::create(const DoutPrefixProvider *dpp, optional_yield y, bool exclusive)
 {
   /* check for old pools config */
   rgw_raw_obj obj(domain_root, avail_pools);
   auto obj_ctx = sysobj_svc->init_obj_ctx();
   auto sysobj = sysobj_svc->get_obj(obj_ctx, obj);
-  int r = sysobj.rop().stat(y);
+  int r = sysobj.rop().stat(y, dpp);
   if (r < 0) {
-    ldout(cct, 10) << "couldn't find old data placement pools config, setting up new ones for the zone" << dendl;
+    ldpp_dout(dpp, 10) << "couldn't find old data placement pools config, setting up new ones for the zone" << dendl;
     /* a new system, let's set new placement info */
     RGWZonePlacementInfo default_placement;
     default_placement.index_pool = name + "." + default_bucket_index_pool_suffix;
@@ -1682,11 +1683,11 @@ int RGWZoneParams::create(optional_yield y, bool exclusive)
 
   r = fix_pool_names(y);
   if (r < 0) {
-    ldout(cct, 0) << "ERROR: fix_pool_names returned r=" << r << dendl;
+    ldpp_dout(dpp, 0) << "ERROR: fix_pool_names returned r=" << r << dendl;
     return r;
   }
 
-  r = RGWSystemMetaObj::create(y, exclusive);
+  r = RGWSystemMetaObj::create(dpp, y, exclusive);
   if (r < 0) {
     return r;
   }
@@ -1695,7 +1696,7 @@ int RGWZoneParams::create(optional_yield y, bool exclusive)
   // so we don't override an existing default
   r = set_as_default(y, true);
   if (r < 0 && r != -EEXIST) {
-    ldout(cct, 10) << "WARNING: failed to set zone as default, r=" << r << dendl;
+    ldpp_dout(dpp, 10) << "WARNING: failed to set zone as default, r=" << r << dendl;
   }
 
   return 0;

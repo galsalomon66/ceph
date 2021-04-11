@@ -6,7 +6,7 @@
 #include <ctime>
 #include <lua.hpp>
 
-class CephContext;
+#include "include/common_fwd.h"
 
 namespace rgw::lua {
 
@@ -24,6 +24,12 @@ void pushtime(lua_State* L, const CephTime& tp)
 static inline void pushstring(lua_State* L, std::string_view str)
 {
   lua_pushlstring(L, str.data(), str.size());
+}
+
+static inline void unsetglobal(lua_State* L, const char* name) 
+{
+  lua_pushnil(L);
+  lua_setglobal(L, name);
 }
 
 // dump the lua stack to stdout
@@ -174,6 +180,20 @@ struct EmptyMetaTable {
 //    RGWDebugLog("hello world from lua")
 //
 void create_debug_action(lua_State* L, CephContext* cct);
+
+// set the packages search path according to:
+// package.path = "<install_dir>/share/lua/5.3/?.lua"                                                                         │                         LuaRocks.
+// package.cpath= "<install_dir>/lib/lua/5.3/?.so"
+void set_package_path(lua_State* L, const std::string& install_dir);
+
+// open standard lua libs and remove the following functions:
+// os.exit()
+// load()
+// loadfile()
+// loadstring()
+// dofile()
+// and the "debug" library
+void open_standard_libs(lua_State* L);
 
 }
 

@@ -376,8 +376,12 @@ class PVolume(object):
             self.set_tag(k, v)
         # after setting all the tags, refresh them for the current object, use the
         # pv_* identifiers to filter because those shouldn't change
-        pv_object = self.get_first_pv(filter={'pv_name': self.pv_name,
-                                              'pv_uuid': self.pv_uuid})
+        pv_object = self.get_single_pv(filter={'pv_name': self.pv_name,
+                                               'pv_uuid': self.pv_uuid})
+
+        if not pv_object:
+            raise RuntimeError('No PV was found.')
+
         self.tags = pv_object.tags
 
     def set_tag(self, key, value):
@@ -471,15 +475,21 @@ def get_pvs(fields=PV_FIELDS, filters='', tags=None):
     return [PVolume(**pv_report) for pv_report in pvs_report]
 
 
-def get_first_pv(fields=PV_FIELDS, filters=None, tags=None):
+def get_single_pv(fields=PV_FIELDS, filters=None, tags=None):
     """
-    Wrapper of get_pv meant to be a convenience method to avoid the phrase::
+    Wrapper of get_pvs() meant to be a convenience method to avoid the phrase::
         pvs = get_pvs()
         if len(pvs) >= 1:
             pv = pvs[0]
     """
     pvs = get_pvs(fields=fields, filters=filters, tags=tags)
-    return pvs[0] if len(pvs) > 0 else []
+
+    if len(pvs) == 0:
+        return None
+    if len(pvs) > 1:
+        raise RuntimeError('Filters {} matched more than 1 PV present on this host.'.format(str(filters)))
+
+    return pvs[0]
 
 
 ################################
@@ -588,9 +598,31 @@ class VolumeGroup(object):
 
     def bytes_to_extents(self, size):
         '''
-        Return a how many extents we can fit into a size in bytes.
+        Return a how many free extents we can fit into a size in bytes. This has
+        some uncertainty involved. If size/extent_size is within 1% of the
+        actual free extents we will return the extent count, otherwise we'll
+        throw an error.
+        This accomodates for the size calculation in batch. We need to report
+        the OSD layout but have not yet created any LVM structures. We use the
+        disk size in batch if no VG is present and that will overshoot the
+        actual free_extent count due to LVM overhead.
+
         '''
-        return int(size / int(self.vg_extent_size))
+        b_to_ext = int(size / int(self.vg_extent_size))
+        if b_to_ext < int(self.vg_free_count):
+            # return bytes in extents if there is more space
+            return b_to_ext
+        elif b_to_ext / int(self.vg_free_count) - 1 < 0.01:
+            # return vg_fre_count if its less then 1% off
+            logger.info(
+                'bytes_to_extents results in {} but only {} '
+                'are available, adjusting the latter'.format(b_to_ext,
+                                                             self.vg_free_count))
+            return int(self.vg_free_count)
+        # else raise an exception
+        raise RuntimeError('Can\'t convert {} to free extents, only {} ({} '
+                           'bytes) are free'.format(size, self.vg_free_count,
+                                                    self.free))
 
     def slots_to_extents(self, slots):
         '''
@@ -628,7 +660,7 @@ def create_vg(devices, name=None, name_prefix=None):
         name] + devices
     )
 
-    return get_first_vg(filters={'vg_name': name})
+    return get_single_vg(filters={'vg_name': name})
 
 
 def extend_vg(vg, devices):
@@ -652,7 +684,7 @@ def extend_vg(vg, devices):
         vg.name] + devices
     )
 
-    return get_first_vg(filters={'vg_name': vg.name})
+    return get_single_vg(filters={'vg_name': vg.name})
 
 
 def reduce_vg(vg, devices):
@@ -674,7 +706,7 @@ def reduce_vg(vg, devices):
         vg.name] + devices
     )
 
-    return get_first_vg(filter={'vg_name': vg.name})
+    return get_single_vg(filter={'vg_name': vg.name})
 
 
 def remove_vg(vg_name):
@@ -720,15 +752,21 @@ def get_vgs(fields=VG_FIELDS, filters='', tags=None):
     return [VolumeGroup(**vg_report) for vg_report in vgs_report]
 
 
-def get_first_vg(fields=VG_FIELDS, filters=None, tags=None):
+def get_single_vg(fields=VG_FIELDS, filters=None, tags=None):
     """
-    Wrapper of get_vg meant to be a convenience method to avoid the phrase::
+    Wrapper of get_vgs() meant to be a convenience method to avoid the phrase::
         vgs = get_vgs()
         if len(vgs) >= 1:
             vg = vgs[0]
     """
     vgs = get_vgs(fields=fields, filters=filters, tags=tags)
-    return vgs[0] if len(vgs) > 0 else []
+
+    if len(vgs) == 0:
+        return None
+    if len(vgs) > 1:
+        raise RuntimeError('Filters {} matched more than 1 VG present on this host.'.format(str(filters)))
+
+    return vgs[0]
 
 
 def get_device_vgs(device, name_prefix=''):
@@ -948,7 +986,7 @@ def create_lv(name_prefix,
         ]
     process.run(command)
 
-    lv = get_first_lv(filters={'lv_name': name, 'vg_name': vg.vg_name})
+    lv = get_single_lv(filters={'lv_name': name, 'vg_name': vg.vg_name})
 
     if tags is None:
         tags = {
@@ -1073,15 +1111,21 @@ def get_lvs(fields=LV_FIELDS, filters='', tags=None):
     return [Volume(**lv_report) for lv_report in lvs_report]
 
 
-def get_first_lv(fields=LV_FIELDS, filters=None, tags=None):
+def get_single_lv(fields=LV_FIELDS, filters=None, tags=None):
     """
-    Wrapper of get_lv meant to be a convenience method to avoid the phrase::
+    Wrapper of get_lvs() meant to be a convenience method to avoid the phrase::
         lvs = get_lvs()
         if len(lvs) >= 1:
             lv = lvs[0]
     """
     lvs = get_lvs(fields=fields, filters=filters, tags=tags)
-    return lvs[0] if len(lvs) > 0 else []
+
+    if len(lvs) == 0:
+        return None
+    if len(lvs) > 1:
+        raise RuntimeError('Filters {} matched more than 1 LV present on this host.'.format(str(filters)))
+
+    return lvs[0]
 
 
 def get_lv_by_name(name):

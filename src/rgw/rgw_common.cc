@@ -387,7 +387,7 @@ struct str_len meta_prefixes[] = { STR_LEN_ENTRY("HTTP_X_AMZ"),
                                    STR_LEN_ENTRY("HTTP_X_ACCOUNT"),
                                    {NULL, 0} };
 
-void req_info::init_meta_info(bool *found_bad_meta)
+void req_info::init_meta_info(const DoutPrefixProvider *dpp, bool *found_bad_meta)
 {
   x_meta_map.clear();
 
@@ -399,7 +399,7 @@ void req_info::init_meta_info(bool *found_bad_meta)
       int len = meta_prefixes[prefix_num].len;
       const char *p = header_name.c_str();
       if (strncmp(p, prefix, len) == 0) {
-        dout(10) << "meta>> " << p << dendl;
+        ldpp_dout(dpp, 10) << "meta>> " << p << dendl;
         const char *name = p+len; /* skip the prefix */
         int name_len = header_name.size() - len;
 
@@ -410,10 +410,12 @@ void req_info::init_meta_info(bool *found_bad_meta)
         snprintf(name_low, meta_prefixes[0].len - 5 + name_len + 1, "%s%s", meta_prefixes[0].str + 5 /* skip HTTP_ */, name); // normalize meta prefix
         int j;
         for (j = 0; name_low[j]; j++) {
-          if (name_low[j] != '_')
-            name_low[j] = tolower(name_low[j]);
-          else
+          if (name_low[j] == '_')
             name_low[j] = '-';
+          else if (name_low[j] == '-')
+            name_low[j] = '_';
+          else
+            name_low[j] = tolower(name_low[j]);
         }
         name_low[j] = 0;
 
@@ -431,7 +433,7 @@ void req_info::init_meta_info(bool *found_bad_meta)
     }
   }
   for (const auto& kv: x_meta_map) {
-    dout(10) << "x>> " << kv.first << ":" << rgw::crypt_sanitize::x_meta_map{kv.first, kv.second} << dendl;
+    ldpp_dout(dpp, 10) << "x>> " << kv.first << ":" << rgw::crypt_sanitize::x_meta_map{kv.first, kv.second} << dendl;
   }
 }
 
@@ -788,7 +790,7 @@ int NameVal::parse()
   return ret; 
 }
 
-int RGWHTTPArgs::parse()
+int RGWHTTPArgs::parse(const DoutPrefixProvider *dpp)
 {
   int pos = 0;
   bool end = false;
@@ -820,7 +822,7 @@ int RGWHTTPArgs::parse()
         });
       }
       string& val = nv.get_val();
-      dout(10) << "name: " << name << " val: " << val << dendl;
+      ldpp_dout(dpp, 10) << "name: " << name << " val: " << val << dendl;
       append(name, val);
     }
 
@@ -838,6 +840,7 @@ void RGWHTTPArgs::append(const string& name, const string& val)
     val_map[name] = val;
   }
 
+// when sub_resources exclusive by object are added, please remember to update obj_sub_resource in RGWHTTPArgs::exist_obj_excl_sub_resource().
   if ((name.compare("acl") == 0) ||
       (name.compare("cors") == 0) ||
       (name.compare("notification") == 0) ||
@@ -1012,14 +1015,16 @@ namespace {
 
 struct perm_state_from_req_state : public perm_state_base {
   req_state * const s;
-  perm_state_from_req_state(req_state * const _s) : perm_state_base(_s->cct,
-                                                                    _s->env,
-                                                                    _s->auth.identity.get(),
-                                                                    _s->bucket.get() ? _s->bucket->get_info() : RGWBucketInfo(),
-                                                                    _s->perm_mask,
-                                                                    _s->defer_to_bucket_acls,
-                                                                    _s->bucket_access_conf),
-                                                                    s(_s) {}
+  perm_state_from_req_state(req_state * const _s)
+    : perm_state_base(_s->cct,
+		      _s->env,
+		      _s->auth.identity.get(),
+		      _s->bucket.get() ? _s->bucket->get_info() : RGWBucketInfo(),
+		      _s->perm_mask,
+		      _s->defer_to_bucket_acls,
+		      _s->bucket_access_conf),
+      s(_s) {}
+
   std::optional<bool> get_request_payer() const override {
     const char *request_payer = s->info.env->get("HTTP_X_AMZ_REQUEST_PAYER");
     if (!request_payer) {

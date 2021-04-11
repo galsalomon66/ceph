@@ -525,6 +525,14 @@ namespace rgw {
       return full_object_name(true /* omit_bucket */);
     }
 
+    inline std::string relative_object_name2() {
+      std::string rname = full_object_name(true /* omit_bucket */);
+      if (is_dir()) {
+	rname += "/";
+      }
+      return rname;
+    }
+
     inline std::string format_child_name(const std::string& cbasename,
                                          bool is_dir) const {
       std::string child_name{relative_object_name()};
@@ -848,7 +856,7 @@ namespace rgw {
     
     std::string uid; // should match user.user_id, iiuc
 
-    RGWUserInfo user;
+    std::unique_ptr<rgw::sal::RGWUser> user;
     RGWAccessKey key; // XXXX acc_key
 
     static std::atomic<uint32_t> fs_inst_counter;
@@ -976,13 +984,13 @@ namespace rgw {
       (void) fh_lru.unref(fh, cohort::lru::FLAG_NONE);
     }
 
-    int authorize(rgw::sal::RGWRadosStore* store) {
-      int ret = store->ctl()->user->get_info_by_access_key(key.id, &user, null_yield);
+    int authorize(const DoutPrefixProvider *dpp, rgw::sal::RGWStore* store) {
+      int ret = store->get_user_by_access_key(dpp, key.id, null_yield, &user);
       if (ret == 0) {
-	RGWAccessKey* k = user.get_key(key.id);
+	RGWAccessKey* k = user->get_info().get_key(key.id);
 	if (!k || (k->key != key.key))
 	  return -EINVAL;
-	if (user.suspended)
+	if (user->get_info().suspended)
 	  return -ERR_USER_SUSPENDED;
       } else {
 	/* try external authenticators (ldap for now) */
@@ -996,9 +1004,8 @@ namespace rgw {
 	}
 	if (token.valid() && (ldh->auth(token.id, token.key) == 0)) {
 	  /* try to store user if it doesn't already exist */
-	  if (store->ctl()->user->get_info_by_uid(rgw_user(token.id), &user, null_yield) < 0) {
-	    int ret = store->ctl()->user->store_info(user, null_yield,
-                                                  RGWUserCtl::PutParams()
+	  if (user->load_by_id(dpp, null_yield) < 0) {
+	    int ret = user->store_info(dpp, null_yield, RGWUserCtl::PutParams()
                                                   .set_exclusive(true));
 	    if (ret < 0) {
 	      lsubdout(get_context(), rgw, 10)
@@ -1179,6 +1186,16 @@ namespace rgw {
     int setattr(RGWFileHandle* rgw_fh, struct stat* st, uint32_t mask,
 		uint32_t flags);
 
+    int getxattrs(RGWFileHandle* rgw_fh, rgw_xattrlist* attrs,
+		  rgw_getxattr_cb cb, void *cb_arg, uint32_t flags);
+
+    int lsxattrs(RGWFileHandle* rgw_fh, rgw_xattrstr *filter_prefix,
+		 rgw_getxattr_cb cb, void *cb_arg, uint32_t flags);
+
+    int setxattrs(RGWFileHandle* rgw_fh, rgw_xattrlist* attrs, uint32_t flags);
+
+    int rmxattrs(RGWFileHandle* rgw_fh, rgw_xattrlist* attrs, uint32_t flags);
+
     void update_fh(RGWFileHandle *rgw_fh);
 
     LookupFHResult stat_bucket(RGWFileHandle* parent, const char *path,
@@ -1277,14 +1294,10 @@ namespace rgw {
 
     uint64_t get_fsid() { return root_fh.state.dev; }
 
-    RGWUserInfo* get_user() { return &user; }
+    RGWUserInfo* get_user() { return &user->get_info(); }
 
-    void update_user() {
-      RGWUserInfo _user = user;
-      auto user_ctl = rgwlib.get_store()->ctl()->user;
-      int ret = user_ctl->get_info_by_access_key(key.id, &user, null_yield);
-      if (ret != 0)
-        user = _user;
+    void update_user(const DoutPrefixProvider *dpp) {
+      (void) rgwlib.get_store()->get_user_by_access_key(dpp, key.id, null_yield, &user);
     }
 
     void close();
@@ -2488,7 +2501,7 @@ public:
   size_t bytes_written;
   bool eio;
 
-  RGWWriteRequest(rgw::sal::RGWRadosStore* store,
+  RGWWriteRequest(rgw::sal::RGWStore* store,
 		  std::unique_ptr<rgw::sal::RGWUser> _user,
 		  RGWFileHandle* _fh, const std::string& _bname,
 		  const std::string& _oname)
@@ -2499,10 +2512,7 @@ public:
 
     // in ctr this is not a virtual call
     // invoking this classes's header_init()
-    int ret = RGWWriteRequest::header_init();
-    if (ret == 0) {
-      ret = init_from_header(store, get_state());
-    }
+    (void) RGWWriteRequest::header_init();
     op = this;
   }
 
@@ -2619,9 +2629,6 @@ public:
 
     src_bucket_name = src_parent->bucket_name();
     // need s->src_bucket_name?
-    src_object->set_name(src_parent->format_child_name(src_name, false));
-    // need s->src_object?
-
     dest_bucket_name = dst_parent->bucket_name();
     // need s->bucket.name?
     dest_obj_name = dst_parent->format_child_name(dst_name, false);
@@ -2655,6 +2662,10 @@ public:
     /* we don't have (any) headers, so just create canned ACLs */
     int ret = s3policy.create_canned(s->owner, s->bucket_owner, s->canned_acl);
     dest_policy = s3policy;
+    /* src_object required before RGWCopyObj::verify_permissions() */
+    rgw_obj_key k = rgw_obj_key(src_name);
+    src_object = rgwlib.get_store()->get_object(k);
+    s->object = src_object->clone(); // needed to avoid trap at rgw_op.cc:5150
     return ret;
   }
 
@@ -2662,6 +2673,62 @@ public:
   void send_partial_response(off_t ofs) override {}
 
 }; /* RGWCopyObjRequest */
+
+class RGWGetAttrsRequest : public RGWLibRequest,
+			   public RGWGetAttrs /* RGWOp */
+{
+public:
+  const std::string& bucket_name;
+  const std::string& obj_name;
+
+  RGWGetAttrsRequest(CephContext* _cct,
+		     std::unique_ptr<rgw::sal::RGWUser> _user,
+		     const std::string& _bname, const std::string& _oname)
+    : RGWLibRequest(_cct, std::move(_user)), RGWGetAttrs(),
+      bucket_name(_bname), obj_name(_oname) {
+    op = this;
+  }
+
+  const flat_map<std::string, std::optional<buffer::list>>& get_attrs() {
+    return attrs;
+  }
+
+  virtual bool only_bucket() { return false; }
+
+  virtual int op_init() {
+    // assign store, s, and dialect_handler
+    RGWObjectCtx* rados_ctx
+      = static_cast<RGWObjectCtx*>(get_state()->obj_ctx);
+    // framework promises to call op_init after parent init
+    assert(rados_ctx);
+    RGWOp::init(rados_ctx->get_store(), get_state(), this);
+    op = this; // assign self as op: REQUIRED
+    return 0;
+  }
+
+  virtual int header_init() {
+
+    struct req_state* s = get_state();
+    s->info.method = "GET";
+    s->op = OP_GET;
+
+    std::string uri = make_uri(bucket_name, obj_name);
+    s->relative_uri = uri;
+    s->info.request_uri = uri;
+    s->info.effective_uri = uri;
+    s->info.request_params = "";
+    s->info.domain = ""; /* XXX ? */
+
+    return 0;
+  }
+
+  virtual int get_params() {
+    return 0;
+  }
+
+  virtual void send_response() {}
+
+}; /* RGWGetAttrsRequest */
 
 class RGWSetAttrsRequest : public RGWLibRequest,
 			   public RGWSetAttrs /* RGWOp */
@@ -2674,6 +2741,10 @@ public:
 		     const std::string& _bname, const std::string& _oname)
     : RGWLibRequest(_cct, std::move(_user)), bucket_name(_bname), obj_name(_oname) {
     op = this;
+  }
+
+  const std::map<std::string, buffer::list>& get_attrs() {
+    return attrs;
   }
 
   bool only_bucket() override { return false; }
@@ -2713,6 +2784,62 @@ public:
   void send_response() override {}
 
 }; /* RGWSetAttrsRequest */
+
+class RGWRMAttrsRequest : public RGWLibRequest,
+			  public RGWRMAttrs /* RGWOp */
+{
+public:
+  const std::string& bucket_name;
+  const std::string& obj_name;
+
+  RGWRMAttrsRequest(CephContext* _cct,
+		     std::unique_ptr<rgw::sal::RGWUser> _user,
+		     const std::string& _bname, const std::string& _oname)
+    : RGWLibRequest(_cct, std::move(_user)), RGWRMAttrs(),
+      bucket_name(_bname), obj_name(_oname) {
+    op = this;
+  }
+
+  const rgw::sal::RGWAttrs& get_attrs() {
+    return attrs;
+  }
+
+  virtual bool only_bucket() { return false; }
+
+  virtual int op_init() {
+    // assign store, s, and dialect_handler
+    RGWObjectCtx* rados_ctx
+      = static_cast<RGWObjectCtx*>(get_state()->obj_ctx);
+    // framework promises to call op_init after parent init
+    assert(rados_ctx);
+    RGWOp::init(rados_ctx->get_store(), get_state(), this);
+    op = this; // assign self as op: REQUIRED
+    return 0;
+  }
+
+  virtual int header_init() {
+
+    struct req_state* s = get_state();
+    s->info.method = "DELETE";
+    s->op = OP_PUT;
+
+    std::string uri = make_uri(bucket_name, obj_name);
+    s->relative_uri = uri;
+    s->info.request_uri = uri;
+    s->info.effective_uri = uri;
+    s->info.request_params = "";
+    s->info.domain = ""; /* XXX ? */
+
+    return 0;
+  }
+
+  virtual int get_params() {
+    return 0;
+  }
+
+  virtual void send_response() {}
+
+}; /* RGWRMAttrsRequest */
 
 /*
  * Send request to get the rados cluster stats

@@ -9,24 +9,26 @@ import _ from 'lodash';
 import { configureTestSuite } from 'ng-bullet';
 import { of } from 'rxjs';
 
-import { InventoryDevice } from '../app/ceph/cluster/inventory/inventory-devices/inventory-device.model';
-import { Pool } from '../app/ceph/pool/pool';
-import { OrchestratorService } from '../app/shared/api/orchestrator.service';
-import { TableActionsComponent } from '../app/shared/datatable/table-actions/table-actions.component';
-import { Icons } from '../app/shared/enum/icons.enum';
-import { CdFormGroup } from '../app/shared/forms/cd-form-group';
-import { CdTableAction } from '../app/shared/models/cd-table-action';
-import { CdTableSelection } from '../app/shared/models/cd-table-selection';
-import { CrushNode } from '../app/shared/models/crush-node';
-import { CrushRule, CrushRuleConfig } from '../app/shared/models/crush-rule';
-import { OrchestratorFeature } from '../app/shared/models/orchestrator.enum';
-import { Permission } from '../app/shared/models/permissions';
+import { InventoryDevice } from '~/app/ceph/cluster/inventory/inventory-devices/inventory-device.model';
+import { Pool } from '~/app/ceph/pool/pool';
+import { RgwDaemon } from '~/app/ceph/rgw/models/rgw-daemon';
+import { OrchestratorService } from '~/app/shared/api/orchestrator.service';
+import { RgwDaemonService } from '~/app/shared/api/rgw-daemon.service';
+import { TableActionsComponent } from '~/app/shared/datatable/table-actions/table-actions.component';
+import { Icons } from '~/app/shared/enum/icons.enum';
+import { CdFormGroup } from '~/app/shared/forms/cd-form-group';
+import { CdTableAction } from '~/app/shared/models/cd-table-action';
+import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
+import { CrushNode } from '~/app/shared/models/crush-node';
+import { CrushRule, CrushRuleConfig } from '~/app/shared/models/crush-rule';
+import { OrchestratorFeature } from '~/app/shared/models/orchestrator.enum';
+import { Permission } from '~/app/shared/models/permissions';
 import {
   AlertmanagerAlert,
   AlertmanagerNotification,
   AlertmanagerNotificationAlert,
   PrometheusRule
-} from '../app/shared/models/prometheus-alerts';
+} from '~/app/shared/models/prometheus-alerts';
 
 export function configureTestBed(configuration: any, entryComponents?: any) {
   configureTestSuite(() => {
@@ -322,7 +324,7 @@ export class PrometheusHelper {
         severity: 'someSeverity'
       },
       annotations: {
-        summary: `${name} is ${state}`
+        description: `${name} is ${state}`
       },
       generatorURL: `http://${name}`,
       startsAt: new Date(new Date('2022-02-22').getTime() * timeMultiplier).toString()
@@ -336,7 +338,7 @@ export class PrometheusHelper {
         alertname: name
       },
       annotations: {
-        summary: `${name} is ${status}`
+        description: `${name} is ${status}`
       },
       generatorURL: `http://${name}`
     } as AlertmanagerNotificationAlert;
@@ -385,6 +387,28 @@ export class IscsiHelper {
   }
 }
 
+export class RgwHelper {
+  static readonly daemons = RgwHelper.getDaemonList();
+  static readonly DAEMON_QUERY_PARAM = `daemon_name=${RgwHelper.daemons[0].id}`;
+
+  static getDaemonList() {
+    const daemonList: RgwDaemon[] = [];
+    for (let daemonIndex = 1; daemonIndex <= 3; daemonIndex++) {
+      const rgwDaemon = new RgwDaemon();
+      rgwDaemon.id = `daemon${daemonIndex}`;
+      rgwDaemon.default = daemonIndex === 2;
+      rgwDaemon.zonegroup_name = `zonegroup${daemonIndex}`;
+      daemonList.push(rgwDaemon);
+    }
+    return daemonList;
+  }
+
+  static selectDaemon() {
+    const service = TestBed.inject(RgwDaemonService);
+    service.selectDaemon(this.daemons[0]);
+  }
+}
+
 export class Mocks {
   static getCrushNode(
     name: string,
@@ -404,7 +428,8 @@ export class Mocks {
       pg_num: 256,
       pg_placement_num: 256,
       pg_num_target: 256,
-      pg_placement_num_target: 256
+      pg_placement_num_target: 256,
+      size: 3
     });
   };
 

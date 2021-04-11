@@ -154,7 +154,6 @@ namespace cache {
 namespace pwl {
 
 class ImageExtentBuf;
-typedef std::vector<ImageExtentBuf> ImageExtentBufs;
 
 const int IN_FLIGHT_FLUSH_WRITE_LIMIT = 64;
 const int IN_FLIGHT_FLUSH_BYTES_LIMIT = (1 * 1024 * 1024);
@@ -170,7 +169,7 @@ const uint32_t LOG_STATS_INTERVAL_SECONDS = 5;
 /**** Write log entries ****/
 const unsigned long int MAX_ALLOC_PER_TRANSACTION = 8;
 const unsigned long int MAX_FREE_PER_TRANSACTION = 1;
-const unsigned int MAX_CONCURRENT_WRITES = 256;
+const unsigned int MAX_CONCURRENT_WRITES = (1024 * 1024);
 
 const uint64_t DEFAULT_POOL_SIZE = 1u<<30;
 const uint64_t MIN_POOL_SIZE = DEFAULT_POOL_SIZE;
@@ -183,7 +182,7 @@ const double RETIRE_HIGH_WATER = 0.50;
 const double RETIRE_LOW_WATER = 0.40;
 const int RETIRE_BATCH_TIME_LIMIT_MS = 250;
 const uint64_t CONTROL_BLOCK_MAX_LOG_ENTRIES = 32;
-const uint64_t SPAN_MAX_DATA_LEN = (16*1024*1024);
+const uint64_t SPAN_MAX_DATA_LEN = (16 * 1024 * 1024);
 
 /* offset of ring on SSD */
 const uint64_t DATA_RING_BUFFER_OFFSET = 8192;
@@ -203,11 +202,11 @@ public:
 POBJ_LAYOUT_BEGIN(rbd_pwl);
 POBJ_LAYOUT_ROOT(rbd_pwl, struct WriteLogPoolRoot);
 POBJ_LAYOUT_TOID(rbd_pwl, uint8_t);
-POBJ_LAYOUT_TOID(rbd_pwl, struct WriteLogPmemEntry);
+POBJ_LAYOUT_TOID(rbd_pwl, struct WriteLogCacheEntry);
 POBJ_LAYOUT_END(rbd_pwl);
 #endif
 
-struct WriteLogPmemEntry {
+struct WriteLogCacheEntry {
   uint64_t sync_gen_number = 0;
   uint64_t write_sequence_number = 0;
   uint64_t image_offset_bytes;
@@ -216,7 +215,7 @@ struct WriteLogPmemEntry {
   TOID(uint8_t) write_data;
   #endif
   #ifdef WITH_RBD_SSD_CACHE
-  uint64_t write_data_pos; /* SSD data offset */
+  uint64_t write_data_pos = 0; /* SSD data offset */
   #endif
   union {
     uint8_t flags;
@@ -233,7 +232,7 @@ struct WriteLogPmemEntry {
   uint32_t ws_datalen = 0;  /* Length of data buffer (writesame only) */
   uint32_t entry_index = 0; /* For debug consistency check. Can be removed if
                              * we need the space */
-  WriteLogPmemEntry(const uint64_t image_offset_bytes=0, const uint64_t write_bytes=0)
+  WriteLogCacheEntry(uint64_t image_offset_bytes=0, uint64_t write_bytes=0)
     : image_offset_bytes(image_offset_bytes), write_bytes(write_bytes),
       entry_valid(0), sync_point(0), sequenced(0), has_data(0), discard(0), writesame(0) {
   }
@@ -258,9 +257,9 @@ struct WriteLogPmemEntry {
     return is_write() || is_discard() || is_writesame();
   }
   friend std::ostream& operator<<(std::ostream& os,
-                                  const WriteLogPmemEntry &entry);
+                                  const WriteLogCacheEntry &entry);
   #ifdef WITH_RBD_SSD_CACHE
-  DENC(WriteLogPmemEntry, v, p) {
+  DENC(WriteLogCacheEntry, v, p) {
     DENC_START(1, 1, p);
     denc(v.sync_gen_number, p);
     denc(v.write_sequence_number, p);
@@ -274,7 +273,7 @@ struct WriteLogPmemEntry {
   }
   #endif
   void dump(ceph::Formatter *f) const;
-  static void generate_test_instances(list<WriteLogPmemEntry*>& ls);
+  static void generate_test_instances(list<WriteLogCacheEntry*>& ls);
 };
 
 struct WriteLogPoolRoot {
@@ -285,7 +284,7 @@ struct WriteLogPoolRoot {
     };
     uint64_t _u64;
   } header;
-  TOID(struct WriteLogPmemEntry) log_entries;   /* contiguous array of log entries */
+  TOID(struct WriteLogCacheEntry) log_entries;   /* contiguous array of log entries */
   #endif
   #ifdef WITH_RBD_SSD_CACHE
   uint64_t layout_version = 0;
@@ -364,18 +363,30 @@ Context * override_ctx(int r, Context *ctx);
 class ImageExtentBuf : public io::Extent {
 public:
   bufferlist m_bl;
-  ImageExtentBuf(io::Extent extent)
-    : io::Extent(extent) { }
-  ImageExtentBuf(io::Extent extent, bufferlist bl)
-    : io::Extent(extent), m_bl(bl) { }
+  bool need_to_truncate;
+  int truncate_offset;
+  bool writesame;
+  ImageExtentBuf() {}
+  ImageExtentBuf(io::Extent extent,
+                 bool need_to_truncate = false, uint64_t truncate_offset = 0,
+                 bool writesame = false)
+    : io::Extent(extent), need_to_truncate(need_to_truncate),
+      truncate_offset(truncate_offset), writesame(writesame) {}
+  ImageExtentBuf(io::Extent extent, bufferlist bl,
+                 bool need_to_truncate = false, uint64_t truncate_offset = 0,
+                 bool writesame = false)
+    : io::Extent(extent), m_bl(bl), need_to_truncate(need_to_truncate),
+      truncate_offset(truncate_offset), writesame(writesame) {}
 };
+
+std::string unique_lock_name(const std::string &name, void *address);
 
 } // namespace pwl
 } // namespace cache
 } // namespace librbd
 
 #ifdef WITH_RBD_SSD_CACHE
-WRITE_CLASS_DENC(librbd::cache::pwl::WriteLogPmemEntry)
+WRITE_CLASS_DENC(librbd::cache::pwl::WriteLogCacheEntry)
 WRITE_CLASS_DENC(librbd::cache::pwl::WriteLogPoolRoot)
 #endif
 

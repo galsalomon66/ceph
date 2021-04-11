@@ -214,6 +214,20 @@ namespace librbd {
     config_source_t source;
   } config_option_t;
 
+  typedef rbd_encryption_format_t encryption_format_t;
+  typedef rbd_encryption_algorithm_t encryption_algorithm_t;
+  typedef rbd_encryption_options_t encryption_options_t;
+
+  typedef struct {
+    encryption_algorithm_t alg;
+    std::string passphrase;
+  } encryption_luks1_format_options_t;
+
+  typedef struct {
+    encryption_algorithm_t alg;
+    std::string passphrase;
+  } encryption_luks2_format_options_t;
+
 class CEPH_RBD_API RBD
 {
 public:
@@ -406,6 +420,8 @@ public:
 
   int group_snap_create(IoCtx& io_ctx, const char *group_name,
 			const char *snap_name);
+  int group_snap_create2(IoCtx& io_ctx, const char *group_name,
+                         const char *snap_name, uint32_t flags);
   int group_snap_remove(IoCtx& io_ctx, const char *group_name,
 			const char *snap_name);
   int group_snap_rename(IoCtx& group_ioctx, const char *group_name,
@@ -573,6 +589,12 @@ public:
   int deep_copy(IoCtx& dest_io_ctx, const char *destname, ImageOptions& opts);
   int deep_copy_with_progress(IoCtx& dest_io_ctx, const char *destname,
                               ImageOptions& opts, ProgressContext &prog_ctx);
+
+  /* encryption */
+  int encryption_format(encryption_format_t format, encryption_options_t opts,
+                        size_t opts_size);
+  int encryption_load(encryption_format_t format, encryption_options_t opts,
+                      size_t opts_size);
 
   /* striping */
   uint64_t get_stripe_unit() const;

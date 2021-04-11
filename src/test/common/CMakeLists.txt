@@ -1,4 +1,6 @@
+if(NOT WIN32)
 # get_command_descriptions
+# libmon not currently available on Windows.
 add_executable(get_command_descriptions
   get_command_descriptions.cc
   $<TARGET_OBJECTS:common_texttable_obj>
@@ -11,21 +13,24 @@ target_link_libraries(get_command_descriptions
   ${BLKID_LIBRARIES}
   ${CMAKE_DL_LIBS}
   )
+endif(NOT WIN32)
 
 # Though FreeBSD has blkdev support, the unittests' mocks only work in Linux
 if(HAVE_BLKID AND LINUX)
   # unittest_blkdev
   add_executable(unittest_blkdev
     test_blkdev.cc)
-  add_ceph_unittest(unittest_blkdev ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unittest_blkdev)
+  add_ceph_unittest(unittest_blkdev)
   target_link_libraries(unittest_blkdev global ${BLKID_LIBRARIES})
 endif()
 
 # unittest_lockdep
-add_executable(unittest_lockdep
-  test_lockdep.cc)
-add_ceph_unittest(unittest_lockdep)
-target_link_libraries(unittest_lockdep ceph-common)
+if(WITH_CEPH_DEBUG_MUTEX)
+  add_executable(unittest_lockdep
+    test_lockdep.cc)
+  add_ceph_unittest(unittest_lockdep)
+  target_link_libraries(unittest_lockdep ceph-common)
+endif()
 
 # unittest_counter
 add_executable(unittest_counter
@@ -64,6 +69,7 @@ add_executable(unittest_prioritized_queue
 target_link_libraries(unittest_prioritized_queue ceph-common)
 add_ceph_unittest(unittest_prioritized_queue)
 
+if(NOT WIN32)
 # unittest_mclock_priority_queue
 add_executable(unittest_mclock_priority_queue
   test_mclock_priority_queue.cc
@@ -72,6 +78,7 @@ add_ceph_unittest(unittest_mclock_priority_queue)
 target_link_libraries(unittest_mclock_priority_queue
   ceph-common
   dmclock::dmclock)
+endif(NOT WIN32)
 
 # unittest_str_map
 add_executable(unittest_str_map
@@ -147,7 +154,7 @@ add_executable(unittest_throttle
   Throttle.cc
   $<TARGET_OBJECTS:unit-main>
   )
-add_ceph_unittest(unittest_throttle parallel)
+add_ceph_unittest(unittest_throttle PARALLEL)
 target_link_libraries(unittest_throttle global) 
 
 # unittest_lru
@@ -255,12 +262,12 @@ add_executable(unittest_weighted_priority_queue
 target_link_libraries(unittest_weighted_priority_queue ceph-common)
 add_ceph_unittest(unittest_weighted_priority_queue)
 
-# unittest_mutex_debug
-add_executable(unittest_mutex_debug
-  test_mutex_debug.cc
-  )
-add_ceph_unittest(unittest_mutex_debug)
-target_link_libraries(unittest_mutex_debug ceph-common)
+if(WITH_CEPH_DEBUG_MUTEX)
+  add_executable(unittest_mutex_debug
+    test_mutex_debug.cc)
+  add_ceph_unittest(unittest_mutex_debug)
+  target_link_libraries(unittest_mutex_debug ceph-common)
+endif()
 
 # unittest_shunique_lock
 add_executable(unittest_shunique_lock
@@ -285,28 +292,30 @@ if(WITH_CEPHFS)
   target_link_libraries(unittest_global_doublefree cephfs librados)
 endif(WITH_CEPHFS)
 
+if(NOT WIN32)
 add_executable(unittest_dns_resolve
   dns_resolve.cc
   $<TARGET_OBJECTS:unit-main>)
 target_link_libraries(unittest_dns_resolve global)
 add_ceph_unittest(unittest_dns_resolve)
+endif()
 
 add_executable(unittest_back_trace
   test_back_trace.cc)
 set_source_files_properties(test_back_trace.cc PROPERTIES
   COMPILE_FLAGS -fno-inline)
-target_link_libraries(unittest_back_trace ceph-common)
 add_ceph_unittest(unittest_back_trace)
+target_link_libraries(unittest_back_trace ceph-common)
 
 add_executable(unittest_hostname
     test_hostname.cc)
-target_link_libraries(unittest_hostname ceph-common)
 add_ceph_unittest(unittest_hostname)
+target_link_libraries(unittest_hostname ceph-common)
 
 add_executable(unittest_iso_8601
     test_iso_8601.cc)
-target_link_libraries(unittest_iso_8601 ceph-common)
 add_ceph_unittest(unittest_iso_8601)
+target_link_libraries(unittest_iso_8601 ceph-common)
 
 add_executable(unittest_convenience test_convenience.cc)
 add_ceph_unittest(unittest_convenience)
@@ -330,7 +339,7 @@ add_ceph_unittest(unittest_hobject)
 
 add_executable(unittest_async_completion test_async_completion.cc)
 add_ceph_unittest(unittest_async_completion)
-target_link_libraries(unittest_async_completion Boost::system)
+target_link_libraries(unittest_async_completion ceph-common Boost::system)
 
 add_executable(unittest_async_shared_mutex test_async_shared_mutex.cc)
 add_ceph_unittest(unittest_async_shared_mutex)
@@ -351,3 +360,9 @@ target_link_libraries(unittest_blocked_completion Boost::system GTest::GTest)
 
 add_executable(unittest_allocate_unique test_allocate_unique.cc)
 add_ceph_unittest(unittest_allocate_unique)
+
+if(HAVE_MSGHDR)
+  add_executable(unittest_journald_logger test_journald_logger.cc)
+  target_link_libraries(unittest_journald_logger ceph-common)
+  add_ceph_unittest(unittest_journald_logger)
+endif()

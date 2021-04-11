@@ -50,9 +50,6 @@ public:
     std::string key() final {
       return iter->first;
     }
-    virtual seastar::future<std::string> tail_key(){
-      return seastar::make_ready_future<std::string>((++obj->omap.end())->first);
-    }
     virtual ceph::buffer::list value() {
       return iter->second;
     }
@@ -118,7 +115,7 @@ public:
     const ghobject_t& end,
     uint64_t limit) const final;
 
-  seastar::future<ceph::bufferlist> omap_get_header(
+  read_errorator::future<ceph::bufferlist> omap_get_header(
     CollectionRef c,
     const ghobject_t& oid) final;
 

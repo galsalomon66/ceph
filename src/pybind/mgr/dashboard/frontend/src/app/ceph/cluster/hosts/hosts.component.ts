@@ -7,11 +7,13 @@ import _ from 'lodash';
 import { HostService } from '~/app/shared/api/host.service';
 import { OrchestratorService } from '~/app/shared/api/orchestrator.service';
 import { ListWithDetails } from '~/app/shared/classes/list-with-details.class';
+import { ConfirmationModalComponent } from '~/app/shared/components/confirmation-modal/confirmation-modal.component';
 import { CriticalConfirmationModalComponent } from '~/app/shared/components/critical-confirmation-modal/critical-confirmation-modal.component';
 import { FormModalComponent } from '~/app/shared/components/form-modal/form-modal.component';
 import { SelectMessages } from '~/app/shared/components/select/select-messages.model';
 import { ActionLabelsI18n } from '~/app/shared/constants/app.constants';
 import { TableComponent } from '~/app/shared/datatable/table/table.component';
+import { CellTemplate } from '~/app/shared/enum/cell-template.enum';
 import { Icons } from '~/app/shared/enum/icons.enum';
 import { NotificationType } from '~/app/shared/enum/notification-type.enum';
 import { CdTableAction } from '~/app/shared/models/cd-table-action';
@@ -23,7 +25,6 @@ import { OrchestratorFeature } from '~/app/shared/models/orchestrator.enum';
 import { OrchestratorStatus } from '~/app/shared/models/orchestrator.interface';
 import { Permissions } from '~/app/shared/models/permissions';
 import { CephShortVersionPipe } from '~/app/shared/pipes/ceph-short-version.pipe';
-import { JoinPipe } from '~/app/shared/pipes/join.pipe';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { ModalService } from '~/app/shared/services/modal.service';
 import { NotificationService } from '~/app/shared/services/notification.service';
@@ -43,6 +44,8 @@ export class HostsComponent extends ListWithDetails implements OnInit {
   table: TableComponent;
   @ViewChild('servicesTpl', { static: true })
   public servicesTpl: TemplateRef<any>;
+  @ViewChild('maintenanceConfirmTpl', { static: true })
+  maintenanceConfirmTpl: TemplateRef<any>;
 
   permissions: Permissions;
   columns: Array<CdTableColumn> = [];
@@ -52,6 +55,11 @@ export class HostsComponent extends ListWithDetails implements OnInit {
   tableActions: CdTableAction[];
   selection = new CdTableSelection();
   modalRef: NgbModalRef;
+  isExecuting = false;
+  errorMessage: string;
+  enableButton: boolean;
+
+  icons = Icons;
 
   messages = {
     nonOrchHost: $localize`The feature is disabled because the selected host is not managed by Orchestrator.`
@@ -61,14 +69,17 @@ export class HostsComponent extends ListWithDetails implements OnInit {
   actionOrchFeatures = {
     create: [OrchestratorFeature.HOST_CREATE],
     edit: [OrchestratorFeature.HOST_LABEL_ADD, OrchestratorFeature.HOST_LABEL_REMOVE],
-    delete: [OrchestratorFeature.HOST_DELETE]
+    delete: [OrchestratorFeature.HOST_DELETE],
+    maintenance: [
+      OrchestratorFeature.HOST_MAINTENANCE_ENTER,
+      OrchestratorFeature.HOST_MAINTENANCE_EXIT
+    ]
   };
 
   constructor(
     private authStorageService: AuthStorageService,
     private hostService: HostService,
     private cephShortVersionPipe: CephShortVersionPipe,
-    private joinPipe: JoinPipe,
     private urlBuilder: URLBuilderService,
     private actionLabels: ActionLabelsI18n,
     private modalService: ModalService,
@@ -100,6 +111,22 @@ export class HostsComponent extends ListWithDetails implements OnInit {
         icon: Icons.destroy,
         click: () => this.deleteAction(),
         disable: (selection: CdTableSelection) => this.getDisable('delete', selection)
+      },
+      {
+        name: this.actionLabels.ENTER_MAINTENANCE,
+        permission: 'update',
+        icon: Icons.enter,
+        click: () => this.hostMaintenance(),
+        disable: (selection: CdTableSelection) =>
+          this.getDisable('maintenance', selection) || this.isExecuting || this.enableButton
+      },
+      {
+        name: this.actionLabels.EXIT_MAINTENANCE,
+        permission: 'update',
+        icon: Icons.exit,
+        click: () => this.hostMaintenance(),
+        disable: (selection: CdTableSelection) =>
+          this.getDisable('maintenance', selection) || this.isExecuting || !this.enableButton
       }
     ];
   }
@@ -121,7 +148,21 @@ export class HostsComponent extends ListWithDetails implements OnInit {
         name: $localize`Labels`,
         prop: 'labels',
         flexGrow: 1,
-        pipe: this.joinPipe
+        cellTransformation: CellTemplate.badge,
+        customTemplateConfig: {
+          class: 'badge-dark'
+        }
+      },
+      {
+        name: $localize`Status`,
+        prop: 'status',
+        flexGrow: 1,
+        cellTransformation: CellTemplate.badge,
+        customTemplateConfig: {
+          map: {
+            maintenance: { class: 'badge-warning' }
+          }
+        }
       },
       {
         name: $localize`Version`,
@@ -137,6 +178,12 @@ export class HostsComponent extends ListWithDetails implements OnInit {
 
   updateSelection(selection: CdTableSelection) {
     this.selection = selection;
+    this.enableButton = false;
+    if (this.selection.hasSelection) {
+      if (this.selection.first().status === 'maintenance') {
+        this.enableButton = true;
+      }
+    }
   }
 
   editAction() {
@@ -166,7 +213,7 @@ export class HostsComponent extends ListWithDetails implements OnInit {
         ],
         submitButtonText: $localize`Edit Host`,
         onSubmit: (values: any) => {
-          this.hostService.update(host['hostname'], values.labels).subscribe(() => {
+          this.hostService.update(host['hostname'], true, values.labels).subscribe(() => {
             this.notificationService.show(
               NotificationType.success,
               $localize`Updated Host "${host.hostname}"`
@@ -179,8 +226,70 @@ export class HostsComponent extends ListWithDetails implements OnInit {
     });
   }
 
-  getDisable(action: 'create' | 'edit' | 'delete', selection: CdTableSelection): boolean | string {
-    if (action === 'delete' || action === 'edit') {
+  hostMaintenance() {
+    this.isExecuting = true;
+    const host = this.selection.first();
+    if (host['status'] !== 'maintenance') {
+      this.hostService.update(host['hostname'], false, [], true).subscribe(
+        () => {
+          this.isExecuting = false;
+          this.notificationService.show(
+            NotificationType.success,
+            $localize`"${host.hostname}" moved to maintenance`
+          );
+          this.table.refreshBtn();
+        },
+        (error) => {
+          this.isExecuting = false;
+          this.errorMessage = error.error['detail'].split(/\n/);
+          error.preventDefault();
+          if (
+            error.error['detail'].includes('WARNING') &&
+            !error.error['detail'].includes('It is NOT safe to stop') &&
+            !error.error['detail'].includes('ALERT')
+          ) {
+            const modalVarialbes = {
+              titleText: $localize`Warning`,
+              buttonText: $localize`Continue`,
+              warning: true,
+              bodyTpl: this.maintenanceConfirmTpl,
+              showSubmit: true,
+              onSubmit: () => {
+                this.hostService.update(host['hostname'], false, [], true, true).subscribe(
+                  () => {
+                    this.modalRef.close();
+                  },
+                  () => this.modalRef.close()
+                );
+              }
+            };
+            this.modalRef = this.modalService.show(ConfirmationModalComponent, modalVarialbes);
+          } else {
+            this.notificationService.show(
+              NotificationType.error,
+              $localize`"${host.hostname}" cannot be put into maintenance`,
+              $localize`${error.error['detail']}`
+            );
+          }
+        }
+      );
+    } else {
+      this.hostService.update(host['hostname'], false, [], true).subscribe(() => {
+        this.isExecuting = false;
+        this.notificationService.show(
+          NotificationType.success,
+          $localize`"${host.hostname}" has exited maintenance`
+        );
+        this.table.refreshBtn();
+      });
+    }
+  }
+
+  getDisable(
+    action: 'create' | 'edit' | 'delete' | 'maintenance',
+    selection: CdTableSelection
+  ): boolean | string {
+    if (action === 'delete' || action === 'edit' || action === 'maintenance') {
       if (!selection?.hasSingleSelection) {
         return true;
       }

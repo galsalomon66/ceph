@@ -24,6 +24,8 @@ extraopts += -DWITH_CEPHFS_JAVA=ON
 extraopts += -DWITH_CEPHFS_SHELL=ON
 extraopts += -DWITH_SYSTEMD=ON -DCEPH_SYSTEMD_ENV_DIR=/etc/default
 extraopts += -DWITH_GRAFANA=ON
+extraopts += -DWITH_RBD_RWL=ON
+extraopts += -DWITH_RBD_SSD_CACHE=ON
 # assumes that ceph is exmpt from multiarch support, so we override the libdir.
 extraopts += -DCMAKE_INSTALL_LIBDIR=/usr/lib
 extraopts += -DCMAKE_INSTALL_LIBEXECDIR=/usr/libexec
@@ -32,6 +34,10 @@ extraopts += -DCMAKE_INSTALL_SYSTEMD_SERVICEDIR=/lib/systemd/system
 ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
   NUMJOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
   extraopts += -DBOOST_J=$(NUMJOBS)
+endif
+ifneq (,$(filter with_system_libs,$(DEB_BUILD_OPTIONS)))
+  extraopts += -DWITH_SYSTEM_BOOST=ON
+  extraopts += -DWITH_SYSTEM_PMDK=ON
 endif
 
 %:
@@ -105,6 +111,7 @@ override_dh_strip:
 	dh_strip -prbd-nbd --dbg-package=rbd-nbd-dbg
 	dh_strip -pceph-common --dbg-package=ceph-common-dbg
 	dh_strip -plibrados2 --dbg-package=librados2-dbg
+	dh_strip -plibsqlite3-mod-ceph --dbg-package=libsqlite3-mod-ceph-dbg
 	dh_strip -plibradosstriper1 --dbg-package=libradosstriper1-dbg
 	dh_strip -plibrbd1 --dbg-package=librbd1-dbg
 	dh_strip -plibcephfs2 --dbg-package=libcephfs2-dbg
@@ -117,7 +124,7 @@ override_dh_strip:
 	dh_strip -ppython3-cephfs --dbg-package=python3-cephfs-dbg
 
 override_dh_shlibdeps:
-	dh_shlibdeps -a --exclude=erasure-code --exclude=rados-classes --exclude=compressor
+	dh_shlibdeps -a --exclude=erasure-code --exclude=rados-classes --exclude=compressor --exclude=ceph_crypto
 
 override_dh_python3:
 	for binding in rados cephfs rbd rgw; do \
@@ -126,6 +133,7 @@ override_dh_python3:
 	dh_python3 -p python3-ceph-argparse
 	dh_python3 -p python3-ceph-common
 	dh_python3 -p cephfs-shell
+	dh_python3 -p cephfs-top
 	dh_python3 -p cephadm
 
 # do not run tests

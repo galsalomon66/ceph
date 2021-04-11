@@ -63,6 +63,9 @@
 /* Define to 1 if the system has the type `__u8'. */
 #cmakedefine HAVE___U8 1
 
+/* Define to 1 if the system has the type `msghdr` */
+#cmakedefine HAVE_MSGHDR 1
+
 /* Define if you have res_nquery */
 #cmakedefine HAVE_RES_NQUERY
 
@@ -165,6 +168,9 @@
 
 /* Define if you want to use LTTng */
 #cmakedefine WITH_LTTNG
+
+/* Define if you want to use Jaeger */
+#cmakedefine HAVE_JAEGER
 
 /* Define if you want to use EVENTTRACE */
 #cmakedefine WITH_EVENTTRACE
@@ -342,6 +348,9 @@
 /* Defined if libedkafka is available for rgw kafka push endpoint */
 #cmakedefine WITH_RADOSGW_KAFKA_ENDPOINT
 
+/* Defined if lua packages can be installed by radosgw */
+#cmakedefine WITH_RADOSGW_LUA_PACKAGES
+
 /* Defined if std::map::merge() is supported */
 #cmakedefine HAVE_STDLIB_MAP_SPLICING
 
@@ -354,6 +363,12 @@
 /* Define if unit tests are built. */
 #cmakedefine UNIT_TESTS_BUILT
 
+/* Define if RBD QCOW migration format is enabled */
+#cmakedefine WITH_RBD_MIGRATION_FORMAT_QCOW_V1
+
+/* Define if libcephsqlite is enabled */
+#cmakedefine WITH_LIBCEPHSQLITE
+
 /* Define if RWL is enabled */
 #cmakedefine WITH_RBD_RWL
 
@@ -362,6 +377,9 @@
 
 /* Define if libcryptsetup version < 2.0.5 */
 #cmakedefine LIBCRYPTSETUP_LEGACY_DATA_ALIGNMENT
+
+/* Define if libcryptsetup can be used (linux only) */
+#cmakedefine HAVE_LIBCRYPTSETUP
 
 /* Shared library extension, such as .so, .dll or .dylib */
 #cmakedefine CMAKE_SHARED_LIBRARY_SUFFIX "@CMAKE_SHARED_LIBRARY_SUFFIX@"

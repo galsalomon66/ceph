@@ -138,6 +138,7 @@
     datalog list               list data log
     datalog trim               trim data log
     datalog status             read data log status
+    datalog type               change datalog type to --log_type={fifo,omap}
     orphans find               deprecated -- init and run search for leaked rados objects (use job-id, pool)
     orphans finish             deprecated -- clean up search for leaked rados objects
     orphans list-jobs          deprecated -- list the current job-ids for orphans search
@@ -176,6 +177,9 @@
     script put                 upload a lua script to a context
     script get                 get the lua script of a context
     script rm                  remove the lua scripts of a context
+    script-package add         add a lua package to the scripts allowlist
+    script-package rm          remove a lua package from the scripts allowlist
+    script-package list        get the lua packages allowlist
   options:
      --tenant=<tenant>         tenant name
      --user_ns=<namespace>     namespace of user (oidc in case of users authenticated with oidc provider)
@@ -334,6 +338,14 @@
   
   Script options:
      --context                 context in which the script runs. one of: preRequest, postRequest
+     --package                 name of the lua package that should be added/removed to/from the allowlist
+     --allow-compilation       package is allowed to compile C code as part of its installation
+  
+  radoslist options:
+     --rgw-obj-fs              the field separator that will separate the rados
+                               object name from the rgw object name;
+                               additionally rados objects for incomplete
+                               multipart uploads will not be output
   
     --conf/-c FILE    read configuration from the given configuration file
     --id ID           set ID portion of my name

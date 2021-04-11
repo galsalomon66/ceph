@@ -61,7 +61,7 @@ WebTokenEngine::get_role_tenant(const string& role_arn) const
 }
 
 boost::optional<RGWOIDCProvider>
-WebTokenEngine::get_provider(const string& role_arn, const string& iss) const
+WebTokenEngine::get_provider(const DoutPrefixProvider *dpp, const string& role_arn, const string& iss) const
 {
   string tenant = get_role_tenant(role_arn);
 
@@ -82,8 +82,8 @@ WebTokenEngine::get_provider(const string& role_arn, const string& iss) const
   }
   auto provider_arn = rgw::ARN(idp_url, "oidc-provider", tenant);
   string p_arn = provider_arn.to_string();
-  RGWOIDCProvider provider(cct, ctl, p_arn, tenant);
-  auto ret = provider.get();
+  RGWOIDCProvider provider(cct, store, p_arn, tenant);
+  auto ret = provider.get(dpp);
   if (ret < 0) {
     return boost::none;
   }
@@ -158,7 +158,7 @@ WebTokenEngine::get_from_jwt(const DoutPrefixProvider* dpp, const std::string& t
       t.client_id = decoded.get_payload_claim("clientId").as_string();
     }
     string role_arn = s->info.args.get("RoleArn");
-    auto provider = get_provider(role_arn, t.iss);
+    auto provider = get_provider(dpp, role_arn, t.iss);
     if (! provider) {
       ldpp_dout(dpp, 0) << "Couldn't get oidc provider info using input iss" << t.iss << dendl;
       throw -EACCES;
@@ -363,9 +363,9 @@ int RGWREST_STS::verify_permission(optional_yield y)
   sts = std::move(_sts);
 
   string rArn = s->info.args.get("RoleArn");
-  const auto& [ret, role] = sts.getRoleInfo(rArn, y);
+  const auto& [ret, role] = sts.getRoleInfo(s, rArn, y);
   if (ret < 0) {
-    ldout(s->cct, 0) << "failed to get role info using role arn: " << rArn << dendl;
+    ldpp_dout(this, 0) << "failed to get role info using role arn: " << rArn << dendl;
     return ret;
   }
   string policy = role.get_assume_role_policy();
@@ -434,9 +434,10 @@ int RGWSTSGetSessionToken::get_params()
     }
 
     if (duration_in_secs < STS::GetSessionTokenRequest::getMinDuration() ||
-            duration_in_secs > s->cct->_conf->rgw_sts_max_session_duration)
+            duration_in_secs > s->cct->_conf->rgw_sts_max_session_duration) {
       ldout(s->cct, 0) << "Invalid duration in secs: " << duration_in_secs << dendl;
       return -EINVAL;
+    }
   }
 
   return 0;
@@ -562,7 +563,7 @@ void RGWSTSAssumeRole::execute(optional_yield y)
 
   STS::AssumeRoleRequest req(s->cct, duration, externalId, policy, roleArn,
                         roleSessionName, serialNumber, tokenCode);
-  STS::AssumeRoleResponse response = sts.assumeRole(req, y);
+  STS::AssumeRoleResponse response = sts.assumeRole(s, req, y);
   op_ret = std::move(response.retCode);
   //Dump the output
   if (op_ret == 0) {
@@ -581,7 +582,7 @@ void RGWSTSAssumeRole::execute(optional_yield y)
 }
 
 int RGW_Auth_STS::authorize(const DoutPrefixProvider *dpp,
-                            rgw::sal::RGWRadosStore *store,
+                            rgw::sal::RGWStore *store,
                             const rgw::auth::StrategyRegistry& auth_registry,
                             struct req_state *s, optional_yield y)
 {
@@ -627,7 +628,7 @@ RGWOp *RGWHandler_REST_STS::op_post()
   return nullptr;
 }
 
-int RGWHandler_REST_STS::init(rgw::sal::RGWRadosStore *store,
+int RGWHandler_REST_STS::init(rgw::sal::RGWStore *store,
                               struct req_state *s,
                               rgw::io::BasicClient *cio)
 {
@@ -666,7 +667,7 @@ int RGWHandler_REST_STS::init_from_header(struct req_state* s,
   }
 
   s->info.args.set(p);
-  s->info.args.parse();
+  s->info.args.parse(s);
 
   /* must be called after the args parsing */
   if (int ret = allocate_formatter(s, default_formatter, configurable_format); ret < 0)
@@ -692,7 +693,7 @@ int RGWHandler_REST_STS::init_from_header(struct req_state* s,
 }
 
 RGWHandler_REST*
-RGWRESTMgr_STS::get_handler(rgw::sal::RGWRadosStore *store,
+RGWRESTMgr_STS::get_handler(rgw::sal::RGWStore *store,
 			    struct req_state* const s,
 			    const rgw::auth::StrategyRegistry& auth_registry,
 			    const std::string& frontend_prefix)

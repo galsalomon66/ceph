@@ -8305,13 +8305,41 @@ TEST_P(StoreTestSpecificAUSize, BluestoreRepairTest) {
     ASSERT_EQ(bstore->fsck(false), 0);
   }
 
+  cerr << "Zombie spanning blob" << std::endl;
+  {
+    bstore->mount();
+    ghobject_t hoid4 = make_object("Object 4", pool);
+    auto ch = store->open_collection(cid);
+    {
+      bufferlist bl;
+      string s(0x1000, 'a');
+      bl.append(s);
+      ObjectStore::Transaction t;
+      for(size_t i = 0; i < 0x10; i++) {
+              t.write(cid, hoid4, i * bl.length(), bl.length(), bl);
+      }
+      r = queue_transaction(store, ch, std::move(t));
+      ASSERT_EQ(r, 0);
+    }
+    sleep(5);
+    {
+      bstore->inject_zombie_spanning_blob(cid, hoid4, 12345);
+      bstore->inject_zombie_spanning_blob(cid, hoid4, 23456);
+      bstore->inject_zombie_spanning_blob(cid, hoid4, 23457);
+    }
+
+    bstore->umount();
+    ASSERT_EQ(bstore->fsck(false), 1);
+    ASSERT_LE(bstore->repair(false), 0);
+    ASSERT_EQ(bstore->fsck(false), 0);
+  }
+
   cerr << "Completing" << std::endl;
   bstore->mount();
 
 }
 
-TEST_P(StoreTest, BluestoreRepairGlobalStats)
-{
+TEST_P(StoreTest, BluestoreRepairGlobalStats) {
   if (string(GetParam()) != "bluestore")
     return;
   const size_t offs_base = 65536 / 2;
@@ -8373,8 +8401,7 @@ TEST_P(StoreTest, BluestoreRepairGlobalStats)
   bstore->mount();
 }
 
-TEST_P(StoreTest, BluestoreRepairGlobalStatsFixOnMount)
-{
+TEST_P(StoreTest, BluestoreRepairGlobalStatsFixOnMount) {
   if (string(GetParam()) != "bluestore")
     return;
   const size_t offs_base = 65536 / 2;
@@ -8979,6 +9006,29 @@ TEST_P(StoreTestSpecificAUSize, SpilloverFixed2Test) {
       bstore->compact();
       const PerfCounters* logger = bstore->get_bluefs_perf_counters();
       ASSERT_LE(logger->get(l_bluefs_slow_used_bytes), 300 * 1024 * 1024); // see SpilloverTest for 300MB choice rationale
+    }
+  );
+}
+
+TEST_P(StoreTestSpecificAUSize, SpilloverFixed3Test) {
+  if (string(GetParam()) != "bluestore")
+    return;
+
+  SetVal(g_conf(), "bluestore_block_db_create", "true");
+  SetVal(g_conf(), "bluestore_block_db_size", "3221225472");
+  SetVal(g_conf(), "bluestore_volume_selection_policy", "fit_to_fast");
+
+  g_conf().apply_changes(nullptr);
+
+  StartDeferred(65536);
+  doManySetAttr(store.get(),
+    [&](ObjectStore* _store) {
+
+      BlueStore* bstore = dynamic_cast<BlueStore*> (_store);
+      ceph_assert(bstore);
+      bstore->compact();
+      const PerfCounters* logger = bstore->get_bluefs_perf_counters();
+      ASSERT_EQ(logger->get(l_bluefs_slow_used_bytes), 0); // reffering to SpilloverFixedTest
     }
   );
 }

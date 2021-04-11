@@ -56,7 +56,13 @@ namespace ca = ceph::async;
 namespace cb = ceph::buffer;
 
 librados::RadosClient::RadosClient(CephContext *cct_)
-  : Dispatcher(cct_->get()) {}
+  : Dispatcher(cct_->get()),
+    cct_deleter{cct, [](CephContext *p) {p->put();}}
+{
+  auto& conf = cct->_conf;
+  conf.add_observer(this);
+  rados_mon_op_timeout = conf.get_val<std::chrono::seconds>("rados_mon_op_timeout");
+}
 
 int64_t librados::RadosClient::lookup_pool(const char *name)
 {
@@ -451,6 +457,7 @@ int librados::RadosClient::get_min_compatible_client(int8_t* min_compat_client,
 
 librados::RadosClient::~RadosClient()
 {
+  cct->_conf.remove_observer(this);
   if (messenger)
     delete messenger;
   if (objecter)
@@ -766,7 +773,7 @@ int librados::RadosClient::blocklist_add(const string& client_address,
 					 uint32_t expire_seconds)
 {
   entity_addr_t addr;
-  if (!addr.parse(client_address.c_str(), 0)) {
+  if (!addr.parse(client_address)) {
     lderr(cct) << "unable to parse address " << client_address << dendl;
     return -EINVAL;
   }

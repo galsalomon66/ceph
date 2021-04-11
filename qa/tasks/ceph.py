@@ -21,9 +21,9 @@ import socket
 import yaml
 
 from paramiko import SSHException
-from tasks.ceph_manager import CephManager, write_conf
+from tasks.ceph_manager import CephManager, write_conf, get_valgrind_args
 from tarfile import ReadError
-from tasks.cephfs.filesystem import Filesystem
+from tasks.cephfs.filesystem import MDSCluster, Filesystem
 from teuthology import misc as teuthology
 from teuthology import contextutil
 from teuthology import exceptions
@@ -74,8 +74,13 @@ def generate_caps(type_):
         yield capability
 
 
-def update_archive_setting(archive_dir, key, value):
-    with open(os.path.join(archive_dir, 'info.yaml'), 'r+') as info_file:
+def update_archive_setting(ctx, key, value):
+    """
+    Add logs directory to job's info log file
+    """
+    if ctx.archive is None:
+        return
+    with open(os.path.join(ctx.archive, 'info.yaml'), 'r+') as info_file:
         info_yaml = yaml.safe_load(info_file)
         info_file.seek(0)
         if 'archive' in info_yaml:
@@ -91,9 +96,8 @@ def ceph_crash(ctx, config):
     Gather crash dumps from /var/lib/ceph/crash
     """
 
-    if ctx.archive is not None:
-        # Add crash directory to job's archive
-        update_archive_setting(ctx.archive, 'crash', '/var/lib/ceph/crash')
+    # Add crash directory to job's archive
+    update_archive_setting(ctx, 'crash', '/var/lib/ceph/crash')
 
     try:
         yield
@@ -165,8 +169,7 @@ def ceph_log(ctx, config):
     )
 
     # Add logs directory to job's info log file
-    if ctx.archive is not None:
-        update_archive_setting(ctx.archive, 'log', '/var/log/ceph')
+    update_archive_setting(ctx, 'log', '/var/log/ceph')
 
     class Rotater(object):
         stop_event = gevent.event.Event()
@@ -414,6 +417,15 @@ def cephfs_setup(ctx, config):
         fs_configs =  cephfs_config.pop('fs', [{'name': 'cephfs'}])
         set_allow_multifs = len(fs_configs) > 1
 
+        # wait for standbys to become available (slow due to valgrind, perhaps)
+        mdsc = MDSCluster(ctx)
+        mds_count = len(list(teuthology.all_roles_of_type(ctx.cluster, 'mds')))
+        with contextutil.safe_while(sleep=2,tries=150) as proceed:
+            while proceed():
+                if len(mdsc.get_standby_daemons()) >= mds_count:
+                    break
+
+        fss = []
         for fs_config in fs_configs:
             assert isinstance(fs_config, dict)
             name = fs_config.pop('name')
@@ -423,8 +435,14 @@ def cephfs_setup(ctx, config):
             if set_allow_multifs:
                 fs.set_allow_multifs()
                 set_allow_multifs = False
+            fss.append(fs)
 
-    yield
+        yield
+
+        for fs in fss:
+            fs.destroy()
+    else:
+        yield
 
 @contextlib.contextmanager
 def watchdog_setup(ctx, config):
@@ -725,6 +743,7 @@ def cluster(ctx, config):
         path=monmap_path,
         mon_bind_addrvec=config.get('mon_bind_addrvec'),
     )
+    ctx.ceph[cluster_name].fsid = fsid
     if not 'global' in conf:
         conf['global'] = {}
     conf['global']['fsid'] = fsid
@@ -1368,15 +1387,16 @@ def run_daemon(ctx, config, type_):
                 profile_path = '/var/log/ceph/profiling-logger/%s.prof' % (role)
                 run_cmd.extend(['env', 'CPUPROFILE=%s' % profile_path])
 
-            if config.get('valgrind') is not None:
+            vc = config.get('valgrind')
+            if vc is not None:
                 valgrind_args = None
-                if type_ in config['valgrind']:
-                    valgrind_args = config['valgrind'][type_]
-                if role in config['valgrind']:
-                    valgrind_args = config['valgrind'][role]
-                run_cmd = teuthology.get_valgrind_args(testdir, role,
-                                                       run_cmd,
-                                                       valgrind_args)
+                if type_ in vc:
+                    valgrind_args = vc[type_]
+                if role in vc:
+                    valgrind_args = vc[role]
+                exit_on_first_error = vc.get('exit_on_first_error', True)
+                run_cmd = get_valgrind_args(testdir, role, run_cmd, valgrind_args,
+                    exit_on_first_error=exit_on_first_error)
 
             run_cmd.extend(run_cmd_tail)
             log_path = f'/var/log/ceph/{cluster_name}-{type_}.{id_}.log'
@@ -1879,6 +1899,9 @@ def task(ctx, config):
             ctx.managers[config['cluster']].stop_pg_num_changes()
 
             if config.get('wait-for-scrub', True):
+                # wait for pgs to become active+clean in case any
+                # recoveries were triggered since the last health check
+                ctx.managers[config['cluster']].wait_for_clean()
                 osd_scrub_pgs(ctx, config)
 
             # stop logging health to clog during shutdown, or else we generate

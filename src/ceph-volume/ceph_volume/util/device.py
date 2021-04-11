@@ -157,11 +157,11 @@ class Device(object):
         # if the path is not absolute, we have 'vg/lv', let's use LV name
         # to get the LV.
         if self.path[0] == '/':
-            lv = lvm.get_first_lv(filters={'lv_path': self.path})
+            lv = lvm.get_single_lv(filters={'lv_path': self.path})
         else:
             vgname, lvname = self.path.split('/')
-            lv = lvm.get_first_lv(filters={'lv_name': lvname,
-                                           'vg_name': vgname})
+            lv = lvm.get_single_lv(filters={'lv_name': lvname,
+                                            'vg_name': vgname})
         if lv:
             self.lv_api = lv
             self.lvs = [lv]
@@ -454,7 +454,7 @@ class Device(object):
             # assuming 4M extents here
             extent_size = 4194304
             vg_free = int(self.size / extent_size) * extent_size
-            if self.size % 4194304 == 0:
+            if self.size % extent_size == 0:
                 # If the extent size divides size exactly, deduct on extent for
                 # LVM metadata
                 vg_free -= extent_size
@@ -478,6 +478,8 @@ class Device(object):
             rejected.append("Used by ceph-disk")
         if self.has_bluestore_label:
             rejected.append('Has BlueStore device label')
+        if self.has_gpt_headers:
+            rejected.append('Has GPT headers')
         return rejected
 
     def _check_lvm_reject_reasons(self):

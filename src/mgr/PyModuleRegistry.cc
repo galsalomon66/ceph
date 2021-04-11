@@ -183,6 +183,7 @@ void PyModuleRegistry::standby_start(MonClient &mc, Finisher &f)
 void PyModuleRegistry::active_start(
             DaemonStateIndex &ds, ClusterState &cs,
             const std::map<std::string, std::string> &kv_store,
+	    bool mon_provides_kv_sub,
             MonClient &mc, LogChannelRef clog_, LogChannelRef audit_clog_,
             Objecter &objecter_, Client &client_, Finisher &f,
             DaemonServer &server)
@@ -202,10 +203,13 @@ void PyModuleRegistry::active_start(
     standby_modules.reset();
   }
 
-  active_modules.reset(new ActivePyModules(
-              module_config, kv_store, ds, cs, mc,
-              clog_, audit_clog_, objecter_, client_, f, server,
-              *this));
+  active_modules.reset(
+    new ActivePyModules(
+      module_config,
+      kv_store, mon_provides_kv_sub,
+      ds, cs, mc,
+      clog_, audit_clog_, objecter_, client_, f, server,
+      *this));
 
   for (const auto &i : modules) {
     // Anything we're skipping because of !can_run will be flagged
@@ -431,7 +435,10 @@ void PyModuleRegistry::handle_config(const std::string &k, const std::string &v)
   std::lock_guard l(module_config.lock);
 
   if (!v.empty()) {
-    dout(10) << "Loaded module_config entry " << k << ":" << v << dendl;
+    // removing value to hide sensitive data going into mgr logs
+    // leaving this for debugging purposes
+    // dout(10) << "Loaded module_config entry " << k << ":" << v << dendl;
+    dout(10) << "Loaded module_config entry " << k << ":" << dendl;
     module_config.config[k] = v;
   } else {
     module_config.config.erase(k);

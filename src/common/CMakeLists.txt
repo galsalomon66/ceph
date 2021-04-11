@@ -74,10 +74,8 @@ set(common_srcs
   hostname.cc
   ipaddr.cc
   iso_8601.cc
-  lockdep.cc
   mempool.cc
   mime.c
-  mutex_debug.cc
   numa.cc
   openssl_opts_handler.cc
   options.cc
@@ -90,7 +88,6 @@ set(common_srcs
   reverse.c
   run_cmd.cc
   scrub_types.cc
-  shared_mutex_debug.cc
   signal.cc
   snap_types.cc
   str_list.cc
@@ -103,14 +100,47 @@ set(common_srcs
   util.cc
   version.cc)
 
+if(HAVE_MSGHDR)
+  list(APPEND common_srcs
+    Journald.cc)
+endif()
+
+if(WITH_CEPH_DEBUG_MUTEX)
+  list(APPEND common_srcs
+    lockdep.cc
+    mutex_debug.cc
+    shared_mutex_debug.cc)
+endif()
+
 if(WIN32)
+  if(MINGW)
+    set(CMAKE_MC_COMPILER x86_64-w64-mingw32-windmc)
+    set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+  endif()
+
+  add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/src/common/event_logging.h
+    COMMAND ${CMAKE_MC_COMPILER} -b -e h -h ${CMAKE_BINARY_DIR}/src/common/
+      -r ${CMAKE_BINARY_DIR}/src/common ${CMAKE_SOURCE_DIR}/src/common/win32/event_logging.mc
+    COMMAND ${CMAKE_RC_COMPILER} ${CMAKE_BINARY_DIR}/src/common/event_logging.rc
+      -o ${CMAKE_BINARY_DIR}/src/common/event_logging.o
+    COMMAND ${CMAKE_CXX_COMPILER} -o ${CMAKE_BINARY_DIR}/bin/event_logging.dll -shared
+      ${CMAKE_BINARY_DIR}/src/common/event_logging.o
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/common/win32/event_logging.mc)
+
+  set_source_files_properties(${CMAKE_SOURCE_DIR}/src/common/win32/syslog.cc
+    APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_BINARY_DIR}/src/common/event_logging.h)
+
+  include_directories(SYSTEM "${CMAKE_BINARY_DIR}/src/common/")
+
   list(APPEND common_srcs
     win32/blkdev.cc
     win32/dns_resolve.cc
     win32/ifaddrs.cc
     win32/registry.cc
     win32/service.cc
-    win32/SubProcess.cc)
+    win32/SubProcess.cc
+    win32/syslog.cc)
 else()
   list(APPEND common_srcs
     blkdev.cc
@@ -192,7 +222,7 @@ elseif(HAVE_ARMV8_CRC)
     crc32c_aarch64.c)
 endif(HAVE_INTEL)
 
-add_library(crc32 ${crc32_srcs})
+add_library(crc32 STATIC ${crc32_srcs})
 if(HAVE_ARMV8_CRC)
   set_target_properties(crc32 PROPERTIES
     COMPILE_FLAGS "${CMAKE_C_FLAGS} ${ARMV8_CRC_COMPILE_FLAGS}")

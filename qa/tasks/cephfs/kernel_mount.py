@@ -29,48 +29,46 @@ class KernelMount(CephFSMount):
         self.rbytes = config.get('rbytes', False)
         self.inst = None
         self.addr = None
+        self._mount_bin = ['adjust-ulimits', 'ceph-coverage', self.test_dir +\
+                           '/archive/coverage', '/bin/mount', '-t', 'ceph']
 
-    def mount(self, mntopts=[], createfs=True, check_status=True, **kwargs):
+    def mount(self, mntopts=[], check_status=True, **kwargs):
         self.update_attrs(**kwargs)
         self.assert_and_log_minimum_mount_details()
 
         self.setup_netns()
 
-        # TODO: don't call setupfs() from within mount(), since it's
-        # absurd. The proper order should be: create FS first and then
-        # call mount().
-        if createfs:
-            self.setupfs(name=self.cephfs_name)
         if not self.cephfs_mntpt:
             self.cephfs_mntpt = '/'
 
-        stderr = StringIO()
-        try:
-            self.client_remote.run(args=['mkdir', '-p', self.hostfs_mntpt],
-                                   timeout=(5*60), stderr=stderr)
-        except CommandFailedError:
-            if 'file exists' not in stderr.getvalue().lower():
-                raise
+        self._create_mntpt()
 
         retval = self._run_mount_cmd(mntopts, check_status)
         if retval:
             return retval
 
-        stderr = StringIO()
-        try:
-            self.client_remote.run(
-                args=['sudo', 'chmod', '1777', self.hostfs_mntpt],
-                stderr=stderr, timeout=(5*60))
-        except CommandFailedError:
-            # the client does not have write permissions in the caps it holds
-            # for the Ceph FS that was just mounted.
-            if 'permission denied' in stderr.getvalue().lower():
-                pass
-
+        self._set_filemode_on_mntpt()
 
         self.mounted = True
 
     def _run_mount_cmd(self, mntopts, check_status):
+        mount_cmd = self._get_mount_cmd(mntopts)
+        mountcmd_stdout, mountcmd_stderr = StringIO(), StringIO()
+
+        try:
+            self.client_remote.run(args=mount_cmd, timeout=(30*60),
+                                   stdout=mountcmd_stdout,
+                                   stderr=mountcmd_stderr, omit_sudo=False)
+        except CommandFailedError as e:
+            log.info('mount command failed')
+            if check_status:
+                raise
+            else:
+                return (e, mountcmd_stdout.getvalue(),
+                        mountcmd_stderr.getvalue())
+        log.info('mount command passed')
+
+    def _get_mount_cmd(self, mntopts):
         opts = 'norequire_active_mds'
         if self.client_id:
             opts += ',name=' + self.client_id
@@ -87,27 +85,12 @@ class KernelMount(CephFSMount):
         if mntopts:
             opts += ',' + ','.join(mntopts)
 
+        mount_cmd = ['sudo'] + self._nsenter_args
         mount_dev = ':' + self.cephfs_mntpt
-        prefix = ['sudo', 'adjust-ulimits', 'ceph-coverage',
-                  self.test_dir + '/archive/coverage',
-                  'nsenter',
-                  '--net=/var/run/netns/{0}'.format(self.netns_name)]
-        cmdargs = prefix + ['/bin/mount', '-t', 'ceph', mount_dev,
-                            self.hostfs_mntpt, '-v', '-o', opts]
+        mount_cmd += self._mount_bin + [mount_dev, self.hostfs_mntpt, '-v',
+                                        '-o', opts]
 
-        mountcmd_stdout, mountcmd_stderr = StringIO(), StringIO()
-        try:
-            self.client_remote.run(args=cmdargs, timeout=(30*60),
-                                   stdout=mountcmd_stdout,
-                                   stderr=mountcmd_stderr)
-        except CommandFailedError as e:
-            log.info('mount command failed')
-            if check_status:
-                raise
-            else:
-                return (e, mountcmd_stdout.getvalue(),
-                        mountcmd_stderr.getvalue())
-        log.info('mount command passed')
+        return mount_cmd
 
     def umount(self, force=False):
         if not self.is_mounted():
@@ -286,3 +269,10 @@ class KernelMount(CephFSMount):
         epoch, barrier = int(first_line_tokens[1]), int(first_line_tokens[3])
 
         return epoch, barrier
+
+    def get_op_read_count(self):
+        buf = self.read_debug_file("metrics")
+        if buf is None:
+            return 0
+        else:
+            return int(re.findall(r'read.*', buf)[0].split()[1])

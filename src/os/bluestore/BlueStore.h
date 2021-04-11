@@ -140,7 +140,10 @@ enum {
   l_bluestore_omap_upper_bound_lat,
   l_bluestore_omap_lower_bound_lat,
   l_bluestore_omap_next_lat,
+  l_bluestore_omap_get_keys_lat,
+  l_bluestore_omap_get_values_lat,
   l_bluestore_clist_lat,
+  l_bluestore_remove_lat,
   l_bluestore_last
 };
 
@@ -1074,7 +1077,7 @@ public:
     bool cached;              ///< Onode is logically in the cache
                               /// (it can be pinned and hence physically out
                               /// of it at the moment though)
-    bool pinned;              ///< Onode is pinned
+    std::atomic_bool pinned;  ///< Onode is pinned
                               /// (or should be pinned when cached)
     ExtentMap extent_map;
 
@@ -1227,20 +1230,7 @@ public:
                                    PerfCounters *logger);
     virtual void _add(Onode* o, int level) = 0;
     virtual void _rm(Onode* o) = 0;
-
-    void pin(Onode* o, std::function<bool ()> validator) {
-      std::lock_guard l(lock);
-      if (validator()) {
-        _pin(o);
-      }
-    }
-
-    void unpin(Onode* o, std::function<bool()> validator) {
-      std::lock_guard l(lock);
-      if (validator()) {
-        _unpin(o);
-      }
-    }
+    virtual void _unpin_and_rm(Onode* o) = 0;
 
     virtual void move_pinned(OnodeCacheShard *to, Onode *o) = 0;
     virtual void add_stats(uint64_t *onodes, uint64_t *pinned_onodes) = 0;
@@ -1302,7 +1292,7 @@ public:
     mempool::bluestore_cache_meta::unordered_map<ghobject_t,OnodeRef> onode_map;
 
     friend struct Collection; // for split_cache()
-
+    friend struct Onode; // for put()
     friend struct LruOnodeCacheShard;
     void _remove(const ghobject_t& oid);
   public:
@@ -1323,7 +1313,7 @@ public:
     void dump(CephContext *cct);
 
     /// return true if f true for any item
-    bool map_any(std::function<bool(OnodeRef)> f);
+    bool map_any(std::function<bool(Onode*)> f);
   };
 
   class OpSequencer;
@@ -1668,8 +1658,8 @@ public:
       modified_objects.insert(o);
     }
     void note_removed_object(OnodeRef& o) {
-      onodes.erase(o);
       modified_objects.insert(o);
+      onodes.erase(o);
     }
 
     void zoned_note_new_object(OnodeRef &o) {
@@ -1863,6 +1853,8 @@ public:
     DeferredBatch *deferred_running = nullptr;
     DeferredBatch *deferred_pending = nullptr;
 
+    ceph::mutex deferred_lock = ceph::make_mutex("BlueStore::OpSequencer::deferred_lock");
+
     BlueStore *store;
     coll_t cid;
 
@@ -1948,7 +1940,7 @@ public:
 	qcond.wait(l);
 	--kv_submitted_waiters;
       }
-    }
+      }
 
     bool flush_commit(Context *c) {
       std::lock_guard l(qlock);
@@ -1991,33 +1983,18 @@ public:
   struct KVFinalizeThread : public Thread {
     BlueStore *store;
     explicit KVFinalizeThread(BlueStore *s) : store(s) {}
-    void *entry() {
+    void *entry() override {
       store->_kv_finalize_thread();
       return NULL;
     }
   };
-
-  struct DBHistogram {
-    struct value_dist {
-      uint64_t count;
-      uint32_t max_len;
-    };
-
-    struct key_dist {
-      uint64_t count;
-      uint32_t max_len;
-      std::map<int, struct value_dist> val_map; ///< slab id to count, max length of value and key
-    };
-
-    std::map<std::string, std::map<int, struct key_dist> > key_hist;
-    std::map<int, uint64_t> value_hist;
-    int get_key_slab(size_t sz);
-    std::string get_key_slab_to_range(int slab);
-    int get_value_slab(size_t sz);
-    std::string get_value_slab_to_range(int slab);
-    void update_hist_entry(std::map<std::string, std::map<int, struct key_dist> > &key_hist,
-			  const std::string &prefix, size_t key_size, size_t value_size);
-    void dump(ceph::Formatter *f);
+  struct ZonedCleanerThread : public Thread {
+    BlueStore *store;
+    explicit ZonedCleanerThread(BlueStore *s) : store(s) {}
+    void *entry() override {
+      store->_zoned_cleaner_thread();
+      return nullptr;
+    }
   };
 
   struct BigDeferredWriteContext {
@@ -2084,7 +2061,7 @@ private:
       ceph::make_mutex("BlueStore::atomic_alloc_and_submit_lock");
   std::atomic<uint64_t> deferred_seq = {0};
   deferred_osr_queue_t deferred_queue; ///< osr's with deferred io pending
-  int deferred_queue_size = 0;         ///< num txc's queued across all osrs
+  std::atomic_int deferred_queue_size = {0};         ///< num txc's queued across all osrs
   std::atomic_int deferred_aggressive = {0}; ///< aggressive wakeup of kv thread
   Finisher  finisher;
   utime_t  deferred_last_submitted = utime_t();
@@ -2110,6 +2087,13 @@ private:
   std::deque<DeferredBatch*> deferred_stable_to_finalize; ///< pending finalization
   bool kv_finalize_in_progress = false;
 
+  ZonedCleanerThread zoned_cleaner_thread;
+  ceph::mutex zoned_cleaner_lock = ceph::make_mutex("BlueStore::zoned_cleaner_lock");
+  ceph::condition_variable zoned_cleaner_cond;
+  bool zoned_cleaner_started = false;
+  bool zoned_cleaner_stop = false;
+  std::deque<uint64_t> zoned_cleaner_queue;
+
   PerfCounters *logger = nullptr;
 
   std::list<CollectionRef> removed_collections;
@@ -2132,7 +2116,12 @@ private:
 		std::numeric_limits<decltype(min_alloc_size)>::digits,
 		"not enough bits for min_alloc_size");
 
-  bool per_pool_omap = false;
+  enum {
+    // Please preserve the order since it's DB persistent
+    OMAP_BULK = 0,
+    OMAP_PER_POOL = 1,
+    OMAP_PER_PG = 2,
+    } per_pool_omap = OMAP_BULK;
 
   ///< maximum allocation unit (power of 2)
   std::atomic<uint64_t> max_alloc_size = {0};
@@ -2161,6 +2150,7 @@ private:
   uint64_t cache_size = 0;       ///< total cache size
   double cache_meta_ratio = 0;   ///< cache ratio dedicated to metadata
   double cache_kv_ratio = 0;     ///< cache ratio dedicated to kv (e.g., rocksdb)
+  double cache_kv_onode_ratio = 0; ///< cache ratio dedicated to kv onodes (e.g., rocksdb onode CF)
   double cache_data_ratio = 0;   ///< cache ratio dedicated to object data
   bool cache_autotune = false;   ///< cache autotune setting
   double cache_autotune_interval = 0; ///< time to wait between cache rebalancing
@@ -2188,6 +2178,7 @@ private:
     ceph::mutex lock = ceph::make_mutex("BlueStore::MempoolThread::lock");
     bool stop = false;
     std::shared_ptr<PriorityCache::PriCache> binned_kv_cache = nullptr;
+    std::shared_ptr<PriorityCache::PriCache> binned_kv_onode_cache = nullptr;
     std::shared_ptr<PriorityCache::Manager> pcm = nullptr;
 
     struct MempoolCache : public PriorityCache::PriCache {
@@ -2466,6 +2457,11 @@ private:
   void _kv_stop();
   void _kv_sync_thread();
   void _kv_finalize_thread();
+
+  void _zoned_cleaner_start();
+  void _zoned_cleaner_stop();
+  void _zoned_cleaner_thread();
+  void _zoned_clean_zone(uint64_t zone_num);
 
   bluestore_deferred_op_t *_get_deferred_op(TransContext *txc);
   void _deferred_queue(TransContext *txc);
@@ -2979,6 +2975,7 @@ public:
   void inject_misreference(coll_t cid1, ghobject_t oid1,
 			   coll_t cid2, ghobject_t oid2,
 			   uint64_t offset);
+  void inject_zombie_spanning_blob(coll_t cid, ghobject_t oid, int16_t blob_id);
   // resets global per_pool_omap in DB
   void inject_legacy_omap();
   // resets per_pool_omap | pgmeta_omap for onode
@@ -3033,6 +3030,7 @@ private:
   std::string spillover_alert;
   std::string legacy_statfs_alert;
   std::string no_per_pool_omap_alert;
+  std::string no_per_pg_omap_alert;
   std::string disk_size_mismatch_alert;
   std::string spurious_read_errors_alert;
 
@@ -3062,7 +3060,7 @@ private:
   }
 
   void _check_legacy_statfs_alert();
-  void _check_no_per_pool_omap_alert();
+  void _check_no_per_pg_or_pool_omap_alert();
   void _set_disk_size_mismatch_alert(const std::string& s) {
     std::lock_guard l(qlock);
     disk_size_mismatch_alert = s;
@@ -3598,7 +3596,7 @@ public:
     }
   };
 public:
-  void fix_per_pool_omap(KeyValueDB *db);
+  void fix_per_pool_omap(KeyValueDB *db, int);
   bool remove_key(KeyValueDB *db, const std::string& prefix, const std::string& key);
   bool fix_shared_blob(KeyValueDB *db,
 		         uint64_t sbid,
@@ -3612,6 +3610,7 @@ public:
   bool fix_false_free(KeyValueDB *db,
 		      FreelistManager* fm,
 		      uint64_t offset, uint64_t len);
+  KeyValueDB::Transaction fix_spanning_blobs(KeyValueDB* db);
 
   void init(uint64_t total_space, uint64_t lres_tracking_unit_size);
 
@@ -3650,6 +3649,7 @@ private:
   KeyValueDB::Transaction fix_shared_blob_txn;
 
   KeyValueDB::Transaction fix_misreferences_txn;
+  KeyValueDB::Transaction fix_onode_txn;
 
   StoreSpaceTracker space_usage_tracker;
 
@@ -3763,7 +3763,7 @@ public:
   void* get_hint_for_log() const override {
     return  reinterpret_cast<void*>(LEVEL_LOG);
   }
-  void* get_hint_by_dir(const std::string& dirname) const override;
+  void* get_hint_by_dir(std::string_view dirname) const override;
 
   void add_usage(void* hint, const bluefs_fnode_t& fnode) override {
     if (hint == nullptr)

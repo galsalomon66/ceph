@@ -57,6 +57,7 @@
 #include "mon/MonOpRequest.h"
 #include "common/WorkQueue.h"
 
+using namespace TOPNSPC::common;
 
 #define CEPH_MON_PROTOCOL     13 /* cluster internal */
 
@@ -98,7 +99,6 @@ enum {
   l_mon_last,
 };
 
-class QuorumService;
 class PaxosService;
 
 class AdminSocketHook;
@@ -218,7 +218,7 @@ public:
 
   // -- elector --
 private:
-  Paxos *paxos;
+  std::unique_ptr<Paxos> paxos;
   Elector elector;
   friend class Elector;
 
@@ -259,6 +259,9 @@ private:
   bool session_stretch_allowed(MonSession *s, MonOpRequestRef& op);
   void disconnect_disallowed_stretch_sessions();
   void set_elector_disallowed_leaders(bool allow_election);
+
+  map <string,string> crush_loc;
+  bool need_set_crush_loc{false};
 public:
   bool is_stretch_mode() { return stretch_mode_engaged; }
   bool is_degraded_stretch_mode() { return degraded_stretch_mode; }
@@ -272,6 +275,7 @@ public:
   void trigger_healthy_stretch_mode();
   void set_healthy_stretch_mode();
   void enable_stretch_mode();
+  void set_mon_crush_location(const string& loc);
 
   
 private:
@@ -298,7 +302,7 @@ private:
   void scrub_timeout();
   void scrub_finish();
   void scrub_reset();
-  void scrub_update_interval(int secs);
+  void scrub_update_interval(ceph::timespan interval);
 
   Context *scrub_event;       ///< periodic event to trigger scrub (leader)
   Context *scrub_timeout_event;  ///< scrub round timeout (leader)
@@ -677,14 +681,16 @@ public:
     return (class ConfigMonitor*) paxos_service[PAXOS_CONFIG].get();
   }
 
+  class KVMonitor *kvmon() {
+    return (class KVMonitor*) paxos_service[PAXOS_KV].get();
+  }
+
   friend class Paxos;
   friend class OSDMonitor;
   friend class MDSMonitor;
   friend class MonmapMonitor;
   friend class LogMonitor;
-  friend class ConfigKeyService;
-
-  QuorumService *config_key_service;
+  friend class KVMonitor;
 
   // -- sessions --
   MonSessionMap session_map;
@@ -838,18 +844,21 @@ public:
   void waitlist_or_zap_client(MonOpRequestRef op);
 
   void send_mon_message(Message *m, int rank);
-  void notify_new_monmap();
+  /** can_change_external_state if we can do things like
+   *  call elections as a result of the new map.
+   */
+  void notify_new_monmap(bool can_change_external_state=false);
 
 public:
   struct C_Command : public C_MonOp {
-    Monitor *mon;
+    Monitor &mon;
     int rc;
     std::string rs;
     ceph::buffer::list rdata;
     version_t version;
-    C_Command(Monitor *_mm, MonOpRequestRef _op, int r, std::string s, version_t v) :
+    C_Command(Monitor &_mm, MonOpRequestRef _op, int r, std::string s, version_t v) :
       C_MonOp(_op), mon(_mm), rc(r), rs(s), version(v){}
-    C_Command(Monitor *_mm, MonOpRequestRef _op, int r, std::string s, ceph::buffer::list rd, version_t v) :
+    C_Command(Monitor &_mm, MonOpRequestRef _op, int r, std::string s, ceph::buffer::list rd, version_t v) :
       C_MonOp(_op), mon(_mm), rc(r), rs(s), rdata(rd), version(v){}
 
     void _finish(int r) override {
@@ -869,15 +878,21 @@ public:
             ss << "session dropped for command ";
           }
         }
-        ss << "cmd='" << m->cmd << "': finished";
+        cmdmap_t cmdmap;
+        std::ostringstream ds;
+        string prefix;
+        cmdmap_from_json(m->cmd, &cmdmap, ds);
+        cmd_getval(cmdmap, "prefix", prefix);
+        if (prefix != "config set" && prefix != "config-key set")
+          ss << "cmd='" << m->cmd << "': finished";
 
-        mon->audit_clog->info() << ss.str();
-	mon->reply_command(op, rc, rs, rdata, version);
+        mon.audit_clog->info() << ss.str();
+        mon.reply_command(op, rc, rs, rdata, version);
       }
       else if (r == -ECANCELED)
         return;
       else if (r == -EAGAIN)
-	mon->dispatch_op(op);
+        mon.dispatch_op(op);
       else
 	ceph_abort_msg("bad C_Command return value");
     }
@@ -966,8 +981,8 @@ private:
   void count_metadata(const std::string& field, ceph::Formatter *f);
   void count_metadata(const std::string& field, std::map<std::string,int> *out);
   // get_all_versions() gathers version information from daemons for health check
-  void get_all_versions(std::map<string, list<string> > &versions);
-  void get_versions(std::map<string, list<string> > &versions);
+  void get_all_versions(std::map<string, std::list<std::string>> &versions);
+  void get_versions(std::map<string, std::list<std::string>> &versions);
 
   // features
   static CompatSet get_initial_supported_features();
@@ -1070,6 +1085,7 @@ public:
 #define CEPH_MON_FEATURE_INCOMPAT_NAUTILUS CompatSet::Feature(11, "nautilus ondisk layout")
 #define CEPH_MON_FEATURE_INCOMPAT_OCTOPUS CompatSet::Feature(12, "octopus ondisk layout")
 #define CEPH_MON_FEATURE_INCOMPAT_PACIFIC CompatSet::Feature(13, "pacific ondisk layout")
+#define CEPH_MON_FEATURE_INCOMPAT_QUINCY CompatSet::Feature(14, "quincy ondisk layout")
 // make sure you add your feature to Monitor::get_supported_features
 
 

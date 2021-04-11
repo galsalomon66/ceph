@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include <seastar/core/future.hh>
+#include <seastar/core/sleep.hh>
 
 #include "messages/MOSDPGLog.h"
 
@@ -53,14 +54,12 @@ seastar::future<> PeeringEvent::start()
   logger().debug("{}: start", *this);
 
   IRef ref = this;
-  return [this] {
-    if (delay) {
-      return seastar::sleep(std::chrono::milliseconds(
-		std::lround(delay*1000)));
-    } else {
-      return seastar::now();
-    }
-  }().then([this] {
+  auto maybe_delay = seastar::now();
+  if (delay) {
+    maybe_delay = seastar::sleep(
+      std::chrono::milliseconds(std::lround(delay * 1000)));
+  }
+  return maybe_delay.then([this] {
     return get_pg();
   }).then([this](Ref<PG> pg) {
     if (!pg) {
@@ -92,8 +91,8 @@ seastar::future<> PeeringEvent::start()
     }
   }).then([this] {
     return shard_services.send_pg_temp();
-  }).then([this, ref=std::move(ref)] {
-    logger().debug("{}: complete", *this);
+  }).finally([ref=std::move(ref)] {
+    logger().debug("{}: complete", *ref);
   });
 }
 

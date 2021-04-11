@@ -73,8 +73,8 @@ function TEST_check_version_health_1() {
     setup $dir || return 1
 
     # create a cluster with two monitors and three osds
-    run_mon $dir a --public-addr=$CEPH_MON_A --mon_warn_older_version_delay=0.0 || return 1
-    run_mon $dir b --public-addr=$CEPH_MON_B --mon_warn_older_version_delay=0.0 || return 1
+    run_mon $dir a --public-addr=$CEPH_MON_A --mon_warn_older_version_delay=0 || return 1
+    run_mon $dir b --public-addr=$CEPH_MON_B --mon_warn_older_version_delay=0 || return 1
     run_osd $dir 0 || return 1
     run_osd $dir 1 || return 1
     run_osd $dir 2 || return 1
@@ -85,7 +85,7 @@ function TEST_check_version_health_1() {
     ceph health detail | grep DAEMON_OLD_VERSION && return 1
 
     kill_daemons $dir KILL osd.1
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" activate_osd $dir 1
+    ceph_debug_version_for_testing=01.00.00-gversion-test activate_osd $dir 1
 
     wait_for_health_string "HEALTH_WARN .*There is a daemon running an older version of ceph" || return 1
 
@@ -96,9 +96,9 @@ function TEST_check_version_health_1() {
     ceph health detail | grep -q "osd.1 is running an older version of ceph: 01.00.00-gversion-test" || return 1
 
     kill_daemons $dir KILL osd.2
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" activate_osd $dir 2
+    ceph_debug_version_for_testing=01.00.00-gversion-test activate_osd $dir 2
     kill_daemons $dir KILL osd.0
-    EXTRA_OPTS=" --debug_version_for_testing=02.00.00-gversion-test" activate_osd $dir 0
+    ceph_debug_version_for_testing=02.00.00-gversion-test activate_osd $dir 0
 
     wait_for_health_string "HEALTH_ERR .*There are daemons running multiple old versions of ceph" || return 1
 
@@ -119,8 +119,8 @@ function TEST_check_version_health_2() {
     setup $dir || return 1
 
     # create a cluster with all daemon types
-    run_mon $dir a --public-addr=$CEPH_MON_A --mon_warn_older_version_delay=0.0 || return 1
-    run_mon $dir b --public-addr=$CEPH_MON_B --mon_warn_older_version_delay=0.0 || return 1
+    run_mon $dir a --public-addr=$CEPH_MON_A --mon_warn_older_version_delay=0 || return 1
+    run_mon $dir b --public-addr=$CEPH_MON_B --mon_warn_older_version_delay=0 || return 1
     run_osd $dir 0 || return 1
     run_osd $dir 1 || return 1
     run_osd $dir 2 || return 1
@@ -135,12 +135,12 @@ function TEST_check_version_health_2() {
     ceph health detail | grep DAEMON_OLD_VERSION && return 1
 
     kill_daemons $dir KILL mon.b
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" run_mon $dir b --mon_warn_older_version_delay=0.0
+    ceph_debug_version_for_testing=01.00.00-gversion-test run_mon $dir b --mon_warn_older_version_delay=0
     # XXX: Manager doesn't seem to use the test specific config for version
     #kill_daemons $dir KILL mgr.x
-    #EXTRA_OPTS=" --debug_version_for_testing=02.00.00-gversion-test" run_mgr $dir x
+    #ceph_debug_version_for_testing=02.00.00-gversion-test run_mgr $dir x
     kill_daemons $dir KILL mds.m
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" run_mds $dir m
+    ceph_debug_version_for_testing=01.00.00-gversion-test run_mds $dir m
 
     wait_for_health_string "HEALTH_WARN .*There are daemons running an older version of ceph" || return 1
 
@@ -151,9 +151,9 @@ function TEST_check_version_health_2() {
     ceph health detail | grep -q "mon.b mds.m are running an older version of ceph: 01.00.00-gversion-test" || return 1
 
     kill_daemons $dir KILL osd.2
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" activate_osd $dir 2
+    ceph_debug_version_for_testing=01.00.00-gversion-test activate_osd $dir 2
     kill_daemons $dir KILL osd.0
-    EXTRA_OPTS=" --debug_version_for_testing=02.00.00-gversion-test" activate_osd $dir 0
+    ceph_debug_version_for_testing=02.00.00-gversion-test activate_osd $dir 0
 
     wait_for_health_string "HEALTH_ERR .*There are daemons running multiple old versions of ceph" || return 1
 
@@ -175,19 +175,26 @@ function TEST_check_version_health_3() {
     setup $dir || return 1
 
     # create a cluster with two monitors and three osds
-    run_mon $dir a --public-addr=$CEPH_MON_A --mon_warn_older_version_delay=20.0 || return 1
-    run_mon $dir b --public-addr=$CEPH_MON_B --mon_warn_older_version_delay=20.0 || return 1
-    run_osd $dir 0 || return 1
-    run_osd $dir 1 || return 1
-    run_osd $dir 2 || return 1
+    run_mon $dir a --public-addr=$CEPH_MON_A || return 1
+    run_mon $dir b --public-addr=$CEPH_MON_B || return 1
+
+    local start_osd_time=$SECONDS
+    # use memstore for faster bootup
+    EXTRA_OPTS=" --osd-objectstore=memstore" run_osd $dir 0 || return 1
+    EXTRA_OPTS=" --osd-objectstore=memstore" run_osd $dir 1 || return 1
+    EXTRA_OPTS=" --osd-objectstore=memstore" run_osd $dir 2 || return 1
+    # take the time used for boot osds into consideration
+    local warn_older_version_delay=$(($SECONDS - $start_osd_time + 20))
 
     sleep 5
     ceph health detail
     # should not see this yet
     ceph health detail | grep DAEMON_OLD_VERSION && return 1
-
+    ceph tell 'mon.*' injectargs "--mon_warn_older_version_delay $warn_older_version_delay"
     kill_daemons $dir KILL osd.1
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" activate_osd $dir 1
+    EXTRA_OPTS=" --osd-objectstore=memstore" \
+          ceph_debug_version_for_testing=01.00.00-gversion-test \
+          activate_osd $dir 1
 
     # Wait 50% of 20 second delay config
     sleep 10
@@ -204,9 +211,9 @@ function TEST_check_version_health_3() {
     ceph health detail | grep -q "osd.1 is running an older version of ceph: 01.00.00-gversion-test" || return 1
 
     kill_daemons $dir KILL osd.2
-    EXTRA_OPTS=" --debug_version_for_testing=01.00.00-gversion-test" activate_osd $dir 2
+    ceph_debug_version_for_testing=01.00.00-gversion-test activate_osd $dir 2
     kill_daemons $dir KILL osd.0
-    EXTRA_OPTS=" --debug_version_for_testing=02.00.00-gversion-test" activate_osd $dir 0
+    ceph_debug_version_for_testing=02.00.00-gversion-test activate_osd $dir 0
 
     wait_for_health_string "HEALTH_ERR .*There are daemons running multiple old versions of ceph" || return 1
 

@@ -39,9 +39,13 @@ LBAInternalNode::lookup_ret LBAInternalNode::lookup(
   }
   assert(meta.begin <= addr);
   assert(meta.end > addr);
-  auto iter = lower_bound(addr);
+
+  [[maybe_unused]] auto [iter, biter] = bound(addr, addr + 1);
+  assert(iter != biter);
+  assert(iter + 1 == biter);
   return get_lba_btree_extent(
     c,
+    this,
     meta.depth - 1,
     iter->get_val(),
     get_paddr()).safe_then([c, addr, depth](auto child) {
@@ -63,6 +67,7 @@ LBAInternalNode::lookup_range_ret LBAInternalNode::lookup_range(
     [this, c, &result, addr, len](const auto &val) mutable {
       return get_lba_btree_extent(
 	c,
+	this,
 	get_meta().depth - 1,
 	val.get_val(),
 	get_paddr()).safe_then(
@@ -90,6 +95,7 @@ LBAInternalNode::insert_ret LBAInternalNode::insert(
   auto insertion_pt = get_containing_child(laddr);
   return get_lba_btree_extent(
     c,
+    this,
     get_meta().depth - 1,
     insertion_pt->get_val(),
     get_paddr()).safe_then(
@@ -109,24 +115,40 @@ LBAInternalNode::mutate_mapping_ret LBAInternalNode::mutate_mapping(
   laddr_t laddr,
   mutate_func_t &&f)
 {
+  return mutate_mapping_internal(c, laddr, true, std::move(f));
+}
+
+LBAInternalNode::mutate_mapping_ret LBAInternalNode::mutate_mapping_internal(
+  op_context_t c,
+  laddr_t laddr,
+  bool is_root,
+  mutate_func_t &&f)
+{
+  auto mutation_pt = get_containing_child(laddr);
+  if (mutation_pt == end()) {
+    assert(0 == "impossible");
+    return crimson::ct_error::enoent::make();
+  }
   return get_lba_btree_extent(
     c,
+    this,
     get_meta().depth - 1,
-    get_containing_child(laddr)->get_val(),
+    mutation_pt->get_val(),
     get_paddr()
-  ).safe_then([this, c, laddr](LBANodeRef extent) {
-    if (extent->at_min_capacity()) {
+  ).safe_then([=](LBANodeRef extent) {
+    if (extent->at_min_capacity() && get_size() > 1) {
       return merge_entry(
 	c,
 	laddr,
-	get_containing_child(laddr),
-	extent);
+	mutation_pt,
+	extent,
+	is_root);
     } else {
       return merge_ertr::make_ready_future<LBANodeRef>(
 	std::move(extent));
     }
   }).safe_then([c, laddr, f=std::move(f)](LBANodeRef extent) mutable {
-    return extent->mutate_mapping(c, laddr, std::move(f));
+    return extent->mutate_mapping_internal(c, laddr, false, std::move(f));
   });
 }
 
@@ -147,6 +169,11 @@ LBAInternalNode::mutate_internal_address_ret LBAInternalNode::mutate_internal_ad
     }
     auto iter = get_containing_child(laddr);
     if (iter->get_key() != laddr) {
+      logger().debug(
+	"LBAInternalNode::mutate_internal_address laddr {} "
+	"not found in extent {}",
+	laddr,
+	*this);
       return crimson::ct_error::enoent::make();
     }
 
@@ -165,6 +192,7 @@ LBAInternalNode::mutate_internal_address_ret LBAInternalNode::mutate_internal_ad
     auto iter = get_containing_child(laddr);
     return get_lba_btree_extent(
       c,
+      this,
       get_meta().depth - 1,
       iter->get_val(),
       get_paddr()
@@ -188,33 +216,38 @@ LBAInternalNode::find_hole_ret LBAInternalNode::find_hole(
     "LBAInternalNode::find_hole min={}, max={}, len={}, *this={}",
     min_addr, max_addr, len, *this);
   auto [begin, end] = bound(min_addr, max_addr);
-  return seastar::repeat_until_value(
-    [i=begin, e=end, c, min_addr, len, this]() mutable {
-    if (i == e) {
-      return seastar::make_ready_future<std::optional<laddr_t>>(
-        std::make_optional<laddr_t>(L_ADDR_NULL));
-    }
-    return get_lba_btree_extent(c,
-				get_meta().depth - 1,
-				i->get_val(),
-				get_paddr()).safe_then(
-      [c, min_addr, len, i](auto extent) mutable {
-      auto lb = std::max(min_addr, i->get_key());
-      auto ub = i->get_next_key_or_max();
-      logger().debug("LBAInternalNode::find_hole extent {} lb {} ub {}",
-		     *extent, lb, ub);
-      return extent->find_hole(c, lb, ub, len);
-    }).safe_then([&i](auto addr) mutable -> std::optional<laddr_t> {
-      if (addr == L_ADDR_NULL) {
-        ++i;
-        return {};
-      } else {
-        return addr;
-      }
-    },
-    // TODO: GCC enters a dead loop if crimson::do_until() is used
-    //       or erroratorized future is returned
-    crimson::ct_error::assert_all{ "fix me - APIv6" });
+  return seastar::do_with(
+    begin,
+    L_ADDR_NULL,
+    [this, c, min_addr, len, end=end](auto &i, auto &ret) {
+      return crimson::do_until([=, &i, &ret]() -> find_hole_ertr::future<bool> {
+	if (i == end) {
+	  return seastar::make_ready_future<bool>(true);
+	}
+	return get_lba_btree_extent(
+	  c,
+	  this,
+	  get_meta().depth - 1,
+	  i->get_val(),
+	  get_paddr()
+	).safe_then([=, &i](auto extent) mutable {
+	  auto lb = std::max(min_addr, i->get_key());
+	  auto ub = i->get_next_key_or_max();
+	  logger().debug("LBAInternalNode::find_hole extent {} lb {} ub {}",
+			 *extent, lb, ub);
+	  return extent->find_hole(c, lb, ub, len);
+	}).safe_then([&i, &ret](auto addr) mutable {
+	  if (addr == L_ADDR_NULL) {
+	    ++i;
+	    return false;
+	  } else {
+	    ret = addr;
+	    return true;
+	  }
+	});
+      }).safe_then([&ret, ref=LBANodeRef(this)] {
+	return ret;
+      });
   });
 }
 
@@ -231,6 +264,7 @@ LBAInternalNode::scan_mappings_ret LBAInternalNode::scan_mappings(
     [=, &f](auto &viter) {
       return get_lba_btree_extent(
 	c,
+	this,
 	get_meta().depth - 1,
 	viter->get_val(),
 	get_paddr()).safe_then([=, &f](auto child) {
@@ -249,6 +283,7 @@ LBAInternalNode::scan_mapped_space_ret LBAInternalNode::scan_mapped_space(
     [=, &f](auto &viter) {
       return get_lba_btree_extent(
 	c,
+	this,
 	get_meta().depth - 1,
 	viter->get_val(),
 	get_paddr()).safe_then([=, &f](auto child) {
@@ -317,12 +352,14 @@ LBAInternalNode::merge_ret
 LBAInternalNode::merge_entry(
   op_context_t c,
   laddr_t addr,
-  internal_iterator_t iter, LBANodeRef entry)
+  internal_iterator_t iter,
+  LBANodeRef entry,
+  bool is_root)
 {
   if (!is_pending()) {
     auto mut = c.cache.duplicate_for_write(c.trans, this)->cast<LBAInternalNode>();
     auto mut_iter = mut->iter_idx(iter->get_offset());
-    return mut->merge_entry(c, addr, mut_iter, entry);
+    return mut->merge_entry(c, addr, mut_iter, entry, is_root);
   }
 
   logger().debug(
@@ -333,11 +370,11 @@ LBAInternalNode::merge_entry(
   auto donor_iter = donor_is_left ? iter - 1 : iter + 1;
   return get_lba_btree_extent(
     c,
+    this,
     get_meta().depth - 1,
     donor_iter->get_val(),
     get_paddr()
-  ).safe_then([this, c, addr, iter, entry, donor_iter, donor_is_left](
-		auto donor) mutable {
+  ).safe_then([=](auto donor) mutable {
     auto [l, r] = donor_is_left ?
       std::make_pair(donor, entry) : std::make_pair(entry, donor);
     auto [liter, riter] = donor_is_left ?
@@ -355,7 +392,26 @@ LBAInternalNode::merge_entry(
 
       c.cache.retire_extent(c.trans, l);
       c.cache.retire_extent(c.trans, r);
-      return split_ertr::make_ready_future<LBANodeRef>(replacement);
+
+      if (is_root && get_size() == 1) {
+	return c.cache.get_root(c.trans).safe_then([=](RootBlockRef croot) {
+	  {
+	    auto mut_croot = c.cache.duplicate_for_write(c.trans, croot);
+	    croot = mut_croot->cast<RootBlock>();
+	  }
+	  croot->get_root().lba_root = lba_root_t{
+	    begin()->get_val(),
+	    get_meta().depth - 1};
+	  logger().debug(
+	    "LBAInternalNode::merge_entry: collapsing root {} to addr {}",
+	    *this,
+	    begin()->get_val());
+	  c.cache.retire_extent(c.trans, this);
+	  return merge_ertr::make_ready_future<LBANodeRef>(replacement);
+	});
+      } else {
+	return merge_ertr::make_ready_future<LBANodeRef>(replacement);
+      }
     } else {
       logger().debug(
 	"LBAInternalEntry::merge_entry balanced l {} r {}",
@@ -379,7 +435,7 @@ LBAInternalNode::merge_entry(
 
       c.cache.retire_extent(c.trans, l);
       c.cache.retire_extent(c.trans, r);
-      return split_ertr::make_ready_future<LBANodeRef>(
+      return merge_ertr::make_ready_future<LBANodeRef>(
 	addr >= pivot ? replacement_r : replacement_l
       );
     }
@@ -470,17 +526,27 @@ LBALeafNode::mutate_mapping_ret LBALeafNode::mutate_mapping(
   laddr_t laddr,
   mutate_func_t &&f)
 {
-  if (!is_pending()) {
-    return c.cache.duplicate_for_write(c.trans, this)->cast<LBALeafNode>(
-    )->mutate_mapping(
-      c,
-      laddr,
-      std::move(f));
-  }
+  return mutate_mapping_internal(c, laddr, true, std::move(f));
+}
 
+LBALeafNode::mutate_mapping_ret LBALeafNode::mutate_mapping_internal(
+  op_context_t c,
+  laddr_t laddr,
+  bool is_root,
+  mutate_func_t &&f)
+{
   auto mutation_pt = find(laddr);
   if (mutation_pt == end()) {
     return crimson::ct_error::enoent::make();
+  }
+
+  if (!is_pending()) {
+    return c.cache.duplicate_for_write(c.trans, this)->cast<LBALeafNode>(
+    )->mutate_mapping_internal(
+      c,
+      laddr,
+      is_root,
+      std::move(f));
   }
 
   auto cur = mutation_pt.get_val();
@@ -599,8 +665,9 @@ LBALeafNode::get_leaf_entries(laddr_t addr, extent_len_t len)
   return bound(addr, addr + len);
 }
 
-Cache::get_extent_ertr::future<LBANodeRef> get_lba_btree_extent(
+get_lba_node_ret get_lba_btree_extent(
   op_context_t c,
+  CachedExtentRef parent,
   depth_t depth,
   paddr_t offset,
   paddr_t base)
@@ -615,17 +682,23 @@ Cache::get_extent_ertr::future<LBANodeRef> get_lba_btree_extent(
     return c.cache.get_extent<LBAInternalNode>(
       c.trans,
       offset,
-      LBA_BLOCK_SIZE).safe_then([c](auto ret) {
+      LBA_BLOCK_SIZE).safe_then([c, parent](auto ret)
+				-> get_lba_node_ret {
 	auto meta = ret->get_meta();
 	if (ret->get_size()) {
 	  ceph_assert(meta.begin <= ret->begin()->get_key());
 	  ceph_assert(meta.end > (ret->end() - 1)->get_key());
 	}
+	if (parent->has_been_invalidated() || ret->has_been_invalidated()) {
+	  return crimson::ct_error::eagain::make();
+	}
 	if (!ret->is_pending() && !ret->pin.is_linked()) {
 	  ret->pin.set_range(meta);
 	  c.pins.add_pin(ret->pin);
 	}
-	return LBANodeRef(ret.detach(), /* add_ref = */ false);
+	return get_lba_node_ret(
+	  get_lba_node_ertr::ready_future_marker{},
+	  LBANodeRef(ret.detach(), /* add_ref = */ false));
       });
   } else {
     logger().debug(
@@ -635,21 +708,28 @@ Cache::get_extent_ertr::future<LBANodeRef> get_lba_btree_extent(
     return c.cache.get_extent<LBALeafNode>(
       c.trans,
       offset,
-      LBA_BLOCK_SIZE).safe_then([offset, c](auto ret) {
+      LBA_BLOCK_SIZE).safe_then([offset, c, parent](auto ret)
+				-> get_lba_node_ret {
 	logger().debug(
-	  "get_lba_btree_extent: read leaf at offset {} {}",
+	  "get_lba_btree_extent: read leaf at offset {} {}, parent {}",
 	  offset,
-	  *ret);
+	  *ret,
+	  *parent);
 	auto meta = ret->get_meta();
 	if (ret->get_size()) {
 	  ceph_assert(meta.begin <= ret->begin()->get_key());
 	  ceph_assert(meta.end > (ret->end() - 1)->get_key());
 	}
+	if (parent->has_been_invalidated() || ret->has_been_invalidated()) {
+	  return crimson::ct_error::eagain::make();
+	}
 	if (!ret->is_pending() && !ret->pin.is_linked()) {
 	  ret->pin.set_range(meta);
 	  c.pins.add_pin(ret->pin);
 	}
-	return LBANodeRef(ret.detach(), /* add_ref = */ false);
+	return get_lba_node_ret(
+	  get_lba_node_ertr::ready_future_marker{},
+	  LBANodeRef(ret.detach(), /* add_ref = */ false));
       });
   }
 }

@@ -4,6 +4,7 @@
 #include "common/dout.h"
 #include "services/svc_zone.h"
 #include "rgw_lua_utils.h"
+#include "rgw_lua.h"
 #include "rgw_common.h"
 #include "rgw_log.h"
 #include "rgw_process.h"
@@ -29,7 +30,7 @@ int RequestLog(lua_State* L)
   const auto s = reinterpret_cast<req_state*>(lua_touserdata(L, lua_upvalueindex(4)));
   const std::string op_name(reinterpret_cast<const char*>(lua_touserdata(L, lua_upvalueindex(5))));
   if (store && s) {
-    const auto rc = rgw_log_op(store->getRados(), rest, s, op_name, olog);
+    const auto rc = rgw_log_op(store, rest, s, op_name, olog);
     lua_pushinteger(L, rc);
   } else {
     ldout(s->cct, 1) << "Lua ERROR: missing rados store, cannot use ops log"  << dendl;
@@ -768,17 +769,21 @@ struct RequestMetaTable : public EmptyMetaTable {
 };
 
 int execute(
-    rgw::sal::RGWRadosStore* store,
+    rgw::sal::RGWStore* store,
     RGWREST* rest,
     OpsLogSocket* olog,
     req_state* s, 
     const char* op_name,
-    const std::string& script) 
+    const std::string& script)
+
 {
   auto L = luaL_newstate();
   lua_state_guard lguard(L);
 
-  luaL_openlibs(L);
+  open_standard_libs(L);
+  set_package_path(L, store ?
+      store->get_luarocks_path() : 
+      "");
 
   create_debug_action(L, s->cct);  
 

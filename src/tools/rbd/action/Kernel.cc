@@ -41,9 +41,7 @@ static std::string map_option_uuid_cb(const char *value_char)
 static std::string map_option_ip_cb(const char *value_char)
 {
   entity_addr_t a;
-  const char *endptr;
-  if (!a.parse(value_char, &endptr) ||
-      endptr != value_char + strlen(value_char)) {
+  if (!a.parse(value_char)) {
     return "";
   }
 
@@ -78,6 +76,16 @@ static std::string map_option_compression_hint_cb(const char *value_char)
 {
   if (!strcmp(value_char, "none") || !strcmp(value_char, "compressible") ||
       !strcmp(value_char, "incompressible")) {
+    return value_char;
+  }
+  return "";
+}
+
+static std::string map_option_ms_mode_cb(const char *value_char)
+{
+  if (!strcmp(value_char, "legacy") || !strcmp(value_char, "crc") ||
+      !strcmp(value_char, "secure") || !strcmp(value_char, "prefer-crc") ||
+      !strcmp(value_char, "prefer-secure")) {
     return value_char;
   }
   return "";
@@ -195,6 +203,10 @@ static int parse_map_options(const std::string &options_string,
     } else if (!strcmp(this_char, "compression_hint")) {
       if (put_map_option_value("compression_hint", value_char,
                                map_option_compression_hint_cb, map_options))
+        return -EINVAL;
+    } else if (!strcmp(this_char, "ms_mode")) {
+      if (put_map_option_value("ms_mode", value_char, map_option_ms_mode_cb,
+                               map_options))
         return -EINVAL;
     } else if (!strcmp(this_char, "udev") || !strcmp(this_char, "noudev")) {
       put_map_option("udev", this_char, map_options);

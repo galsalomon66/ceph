@@ -84,6 +84,14 @@ enum {
   l_mds_root_rfiles,
   l_mds_root_rbytes,
   l_mds_root_rsnaps,
+  l_mds_scrub_backtrace_fetch,
+  l_mds_scrub_set_tag,
+  l_mds_scrub_backtrace_repaired,
+  l_mds_scrub_inotable_repaired,
+  l_mds_scrub_dir_inodes,
+  l_mds_scrub_dir_base_inodes,
+  l_mds_scrub_dirfrag_rstats,
+  l_mds_scrub_file_inodes,
   l_mdss_handle_inode_file_caps,
   l_mdss_ceph_cap_op_revoke,
   l_mdss_ceph_cap_op_grant,
@@ -211,7 +219,7 @@ class MDSRank {
     bool allows_multimds_snaps() const { return mdsmap->allows_multimds_snaps(); }
 
     bool is_cache_trimmable() const {
-      return is_clientreplay() || is_active() || is_stopping();
+      return is_standby_replay() || is_clientreplay() || is_active() || is_stopping();
     }
 
     void handle_write_error(int err);

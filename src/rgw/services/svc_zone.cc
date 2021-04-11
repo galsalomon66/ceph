@@ -64,44 +64,44 @@ bool RGWSI_Zone::zone_syncs_from(const RGWZone& target_zone, const RGWZone& sour
          sync_modules_svc->get_manager()->supports_data_export(source_zone.tier_type);
 }
 
-int RGWSI_Zone::do_start(optional_yield y)
+int RGWSI_Zone::do_start(optional_yield y, const DoutPrefixProvider *dpp)
 {
-  int ret = sysobj_svc->start(y);
+  int ret = sysobj_svc->start(y, dpp);
   if (ret < 0) {
     return ret;
   }
 
   assert(sysobj_svc->is_started()); /* if not then there's ordering issue */
 
-  ret = rados_svc->start(y);
+  ret = rados_svc->start(y, dpp);
   if (ret < 0) {
     return ret;
   }
 
   ret = realm->init(cct, sysobj_svc, y);
   if (ret < 0 && ret != -ENOENT) {
-    ldout(cct, 0) << "failed reading realm info: ret "<< ret << " " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, 0) << "failed reading realm info: ret "<< ret << " " << cpp_strerror(-ret) << dendl;
     return ret;
   } else if (ret != -ENOENT) {
-    ldout(cct, 20) << "realm  " << realm->get_name() << " " << realm->get_id() << dendl;
+    ldpp_dout(dpp, 20) << "realm  " << realm->get_name() << " " << realm->get_id() << dendl;
     ret = current_period->init(cct, sysobj_svc, realm->get_id(), y,
 			       realm->get_name());
     if (ret < 0 && ret != -ENOENT) {
-      ldout(cct, 0) << "failed reading current period info: " << " " << cpp_strerror(-ret) << dendl;
+      ldpp_dout(dpp, 0) << "failed reading current period info: " << " " << cpp_strerror(-ret) << dendl;
       return ret;
     }
-    ldout(cct, 20) << "current period " << current_period->get_id() << dendl;  
+    ldpp_dout(dpp, 20) << "current period " << current_period->get_id() << dendl;  
   }
 
-  ret = replace_region_with_zonegroup(y);
+  ret = replace_region_with_zonegroup(dpp, y);
   if (ret < 0) {
-    lderr(cct) << "failed converting region to zonegroup : ret "<< ret << " " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, -1) << "failed converting region to zonegroup : ret "<< ret << " " << cpp_strerror(-ret) << dendl;
     return ret;
   }
 
-  ret = convert_regionmap(y);
+  ret = convert_regionmap(dpp, y);
   if (ret < 0) {
-    lderr(cct) << "failed converting regionmap: " << cpp_strerror(-ret) << dendl;
+    ldpp_dout(dpp, -1) << "failed converting regionmap: " << cpp_strerror(-ret) << dendl;
     return ret;
   }
 
@@ -118,7 +118,7 @@ int RGWSI_Zone::do_start(optional_yield y)
   bool using_local = (!zg_initialized);
   if (using_local) {
     ldout(cct, 10) << " cannot find current period zonegroup using local zonegroup" << dendl;
-    ret = init_zg_from_local(&creating_defaults, y);
+    ret = init_zg_from_local(dpp, &creating_defaults, y);
     if (ret < 0) {
       return ret;
     }
@@ -153,7 +153,7 @@ int RGWSI_Zone::do_start(optional_yield y)
       return -EINVAL;
     }
     ldout(cct, 1) << "Cannot find zone id=" << zone_params->get_id() << " (name=" << zone_params->get_name() << "), switching to local zonegroup configuration" << dendl;
-    ret = init_zg_from_local(&creating_defaults, y);
+    ret = init_zg_from_local(dpp, &creating_defaults, y);
     if (ret < 0) {
       return ret;
     }
@@ -190,7 +190,7 @@ int RGWSI_Zone::do_start(optional_yield y)
                                &target_zones,
                                false); /* relaxed: also get all zones that we allow to sync to/from */
 
-  ret = sync_modules_svc->start(y);
+  ret = sync_modules_svc->start(y, dpp);
   if (ret < 0) {
     return ret;
   }
@@ -228,7 +228,7 @@ int RGWSI_Zone::do_start(optional_yield y)
       continue;
     }
     ldout(cct, 20) << "generating connection object for zone " << z.name << " id " << z.id << dendl;
-    RGWRESTConn *conn = new RGWRESTConn(cct, this, z.id, z.endpoints);
+    RGWRESTConn *conn = new RGWRESTConn(cct, this, z.id, z.endpoints, zonegroup->api_name);
     zone_conn_map[id] = conn;
 
     bool zone_is_source = source_zones.find(z.id) != source_zones.end();
@@ -344,7 +344,7 @@ int RGWSI_Zone::list_periods(const string& current_period, list<string>& periods
  * backward compatability
  * Returns 0 on success, -ERR# on failure.
  */
-int RGWSI_Zone::replace_region_with_zonegroup(optional_yield y)
+int RGWSI_Zone::replace_region_with_zonegroup(const DoutPrefixProvider *dpp, optional_yield y)
 {
   /* copy default region */
   /* convert default region to default zonegroup */
@@ -445,9 +445,9 @@ int RGWSI_Zone::replace_region_with_zonegroup(optional_yield y)
       ldout(cct, 0) <<  __func__ << " Error initing new realm: " << cpp_strerror(-ret)  << dendl;
       return ret;
     }
-    ret = new_realm.create(y);
+    ret = new_realm.create(dpp, y);
     if (ret < 0 && ret != -EEXIST) {
-      ldout(cct, 0) <<  __func__ << " Error creating new realm: " << cpp_strerror(-ret)  << dendl;
+      ldpp_dout(dpp, 0) <<  __func__ << " Error creating new realm: " << cpp_strerror(-ret)  << dendl;
       return ret;
     }
     ret = new_realm.set_as_default(y);
@@ -701,10 +701,10 @@ int RGWSI_Zone::init_zg_from_period(bool *initialized, optional_yield y)
       }
     }
     const auto& endpoints = master->second.endpoints;
-    add_new_connection_to_map(zonegroup_conn_map, zg, new RGWRESTConn(cct, this, zg.get_id(), endpoints));
+    add_new_connection_to_map(zonegroup_conn_map, zg, new RGWRESTConn(cct, this, zg.get_id(), endpoints, zg.api_name));
     if (!current_period->get_master_zonegroup().empty() &&
         zg.get_id() == current_period->get_master_zonegroup()) {
-      rest_master_conn = new RGWRESTConn(cct, this, zg.get_id(), endpoints);
+      rest_master_conn = new RGWRESTConn(cct, this, zg.get_id(), endpoints, zg.api_name);
     }
   }
 
@@ -713,7 +713,7 @@ int RGWSI_Zone::init_zg_from_period(bool *initialized, optional_yield y)
   return 0;
 }
 
-int RGWSI_Zone::init_zg_from_local(bool *creating_defaults, optional_yield y)
+int RGWSI_Zone::init_zg_from_local(const DoutPrefixProvider *dpp, bool *creating_defaults, optional_yield y)
 {
   int ret = zonegroup->init(cct, sysobj_svc, y);
   if ( (ret < 0 && ret != -ENOENT) || (ret == -ENOENT && !cct->_conf->rgw_zonegroup.empty())) {
@@ -722,9 +722,9 @@ int RGWSI_Zone::init_zg_from_local(bool *creating_defaults, optional_yield y)
   } else if (ret == -ENOENT) {
     *creating_defaults = true;
     ldout(cct, 10) << "Creating default zonegroup " << dendl;
-    ret = zonegroup->create_default(y);
+    ret = zonegroup->create_default(dpp, y);
     if (ret < 0) {
-      ldout(cct, 0) << "failure in zonegroup create_default: ret "<< ret << " " << cpp_strerror(-ret)
+      ldpp_dout(dpp, 0) << "failure in zonegroup create_default: ret "<< ret << " " << cpp_strerror(-ret)
         << dendl;
       return ret;
     }
@@ -735,7 +735,7 @@ int RGWSI_Zone::init_zg_from_local(bool *creating_defaults, optional_yield y)
       return ret;
     }
   }
-  ldout(cct, 20) << "zonegroup " << zonegroup->get_name() << dendl;
+  ldpp_dout(dpp, 20) << "zonegroup " << zonegroup->get_name() << dendl;
   if (zonegroup->is_master_zonegroup()) {
     // use endpoints from the zonegroup's master zone
     auto master = zonegroup->zones.find(zonegroup->master_zone);
@@ -758,13 +758,13 @@ int RGWSI_Zone::init_zg_from_local(bool *creating_defaults, optional_yield y)
       }
     }
     const auto& endpoints = master->second.endpoints;
-    rest_master_conn = new RGWRESTConn(cct, this, zonegroup->get_id(), endpoints);
+    rest_master_conn = new RGWRESTConn(cct, this, zonegroup->get_id(), endpoints, zonegroup->api_name);
   }
 
   return 0;
 }
 
-int RGWSI_Zone::convert_regionmap(optional_yield y)
+int RGWSI_Zone::convert_regionmap(const DoutPrefixProvider *dpp, optional_yield y)
 {
   RGWZoneGroupMap zonegroupmap;
 
@@ -805,9 +805,9 @@ int RGWSI_Zone::convert_regionmap(optional_yield y)
 	cpp_strerror(-ret) << dendl;
       return ret;
     } else if (ret == -ENOENT) {
-      ret = zonegroup.create(y);
+      ret = zonegroup.create(dpp, y);
       if (ret < 0) {
-	ldout(cct, 0) << "Error could not create " << zonegroup.get_name() << ": " <<
+	ldpp_dout(dpp, 0) << "Error could not create " << zonegroup.get_name() << ": " <<
 	  cpp_strerror(-ret) << dendl;
 	return ret;
       }

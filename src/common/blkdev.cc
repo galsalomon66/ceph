@@ -533,7 +533,7 @@ std::string get_device_id(const std::string& devname,
   }
   if (err) {
     if (model.empty() && serial.empty()) {
-      *err = std::string("fallback method has no model nor serial'");
+      *err = std::string("fallback method has no model nor serial");
       return {};
     } else if (model.empty()) {
       *err = std::string("fallback method has serial '") + serial
@@ -700,8 +700,8 @@ static int block_device_run_smartctl(const string& devname, int timeout,
     timeout);
   smartctl.add_cmd_args(
     "smartctl",
-    "-a",
-    //"-x",
+    //"-a",    // all SMART info
+    "-x",    // all SMART and non-SMART info
     "--json=o",
     device.c_str(),
     NULL);

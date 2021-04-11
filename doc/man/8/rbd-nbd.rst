@@ -9,7 +9,7 @@
 Synopsis
 ========
 
-| **rbd-nbd** [-c conf] [--read-only] [--device *nbd device*] [--nbds_max *limit*] [--max_part *limit*] [--exclusive] [--io-timeout *seconds*] [--reattach-timeout *seconds*] map *image-spec* | *snap-spec*
+| **rbd-nbd** [-c conf] [--read-only] [--device *nbd device*] [--nbds_max *limit*] [--max_part *limit*] [--exclusive] [--encryption-format *format*] [--encryption-passphrase-file *passphrase-file*] [--io-timeout *seconds*] [--reattach-timeout *seconds*] map *image-spec* | *snap-spec*
 | **rbd-nbd** unmap *nbd device* | *image-spec* | *snap-spec*
 | **rbd-nbd** list-mapped
 | **rbd-nbd** attach --device *nbd device* *image-spec* | *snap-spec*
@@ -36,16 +36,25 @@ Options
 
 .. option:: --nbds_max *limit*
 
-   Override the parameter of NBD kernel module when modprobe, used to
+   Override the parameter nbds_max of NBD kernel module when modprobe, used to
    limit the count of nbd device.
 
 .. option:: --max_part *limit*
 
-    Override for module param nbds_max.
+    Override for module param max_part.
 
 .. option:: --exclusive
 
    Forbid writes by other clients.
+
+.. option:: --encryption-format
+
+   Image encryption format.
+   Possible values: *luks1*, *luks2*
+
+.. option:: --encryption-passphrase-file
+
+   Path of file containing a passphrase for unlocking image encryption.
 
 .. option:: --io-timeout *seconds*
 
@@ -71,7 +80,7 @@ Availability
 ============
 
 **rbd-nbd** is part of Ceph, a massively scalable, open-source, distributed storage system. Please refer to
-the Ceph documentation at http://ceph.com/docs for more information.
+the Ceph documentation at https://docs.ceph.com/ for more information.
 
 
 See also

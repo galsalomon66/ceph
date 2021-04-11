@@ -35,8 +35,7 @@ struct obc_to_hoid {
   }
 };
 
-class ObjectContext : public Blocker,
-		      public ceph::common::intrusive_lru_base<
+class ObjectContext : public ceph::common::intrusive_lru_base<
   ceph::common::intrusive_lru_config<
     hobject_t, ObjectContext, obc_to_hoid<ObjectContext>>>
 {
@@ -44,14 +43,13 @@ public:
   Ref head; // Ref defined as part of ceph::common::intrusive_lru_base
   ObjectState obs;
   std::optional<SnapSet> ss;
-  bool loaded : 1;
   // the watch / notify machinery rather stays away from the hot and
   // frequented paths. std::map is used mostly because of developer's
   // convenience.
   using watch_key_t = std::pair<uint64_t, entity_name_t>;
   std::map<watch_key_t, seastar::shared_ptr<crimson::osd::Watch>> watchers;
 
-  ObjectContext(const hobject_t &hoid) : obs(hoid), loaded(false) {}
+  ObjectContext(const hobject_t &hoid) : obs(hoid) {}
 
   const hobject_t &get_oid() const {
     return obs.oi.soid;
@@ -75,14 +73,12 @@ public:
     ceph_assert(is_head());
     obs = std::move(_obs);
     ss = std::move(_ss);
-    loaded = true;
   }
 
   void set_clone_state(ObjectState &&_obs, Ref &&_head) {
     ceph_assert(!is_head());
     obs = std::move(_obs);
     head = _head;
-    loaded = true;
   }
 
   /// pass the provided exception to any waiting consumers of this ObjectContext
@@ -98,19 +94,6 @@ private:
   tri_mutex lock;
   bool recovery_read_marker = false;
 
-  const char *get_type_name() const final {
-    return "ObjectContext";
-  }
-  void dump_detail(Formatter *f) const final;
-
-  template <typename LockF>
-  seastar::future<> get_lock(
-    Operation *op,
-    LockF &&lockf) {
-    return op->with_blocking_future(
-      make_blocking_future(std::forward<LockF>(lockf)));
-  }
-
   template <typename Lock, typename Func>
   auto _with_lock(Lock&& lock, Func&& func) {
     Ref obc = this;
@@ -121,33 +104,91 @@ private:
     });
   }
 
+  boost::intrusive::list_member_hook<> list_hook;
+  uint64_t list_link_cnt = 0;
+
 public:
-  template<RWState::State Type, typename Func>
-  auto with_lock(Func&& func) {
-    switch (Type) {
-    case RWState::RWWRITE:
-      return _with_lock(lock.for_write(), std::forward<Func>(func));
-    case RWState::RWREAD:
-      return _with_lock(lock.for_read(), std::forward<Func>(func));
-    case RWState::RWEXCL:
-      return _with_lock(lock.for_excl(), std::forward<Func>(func));
-    case RWState::RWNONE:
-      return seastar::futurize_invoke(std::forward<Func>(func));
-    default:
-      assert(0 == "noop");
+
+  template <typename ListType>
+  void append_to(ListType& list) {
+    if (list_link_cnt++ == 0) {
+      list.push_back(*this);
     }
   }
-  template<RWState::State Type, typename Func>
+
+  template <typename ListType>
+  void remove_from(ListType&& list) {
+    assert(list_link_cnt > 0);
+    if (--list_link_cnt == 0) {
+      list.erase(std::decay_t<ListType>::s_iterator_to(*this));
+    }
+  }
+
+  using obc_accessing_option_t = boost::intrusive::member_hook<
+    ObjectContext,
+    boost::intrusive::list_member_hook<>,
+    &ObjectContext::list_hook>;
+
+  template<RWState::State Type, typename InterruptCond = void, typename Func>
+  auto with_lock(Func&& func) {
+    if constexpr (!std::is_void_v<InterruptCond>) {
+      auto wrapper = ::crimson::interruptible::interruptor<InterruptCond>::wrap_function(std::forward<Func>(func));
+      switch (Type) {
+      case RWState::RWWRITE:
+	return _with_lock(lock.for_write(), std::move(wrapper));
+      case RWState::RWREAD:
+	return _with_lock(lock.for_read(), std::move(wrapper));
+      case RWState::RWEXCL:
+	return _with_lock(lock.for_excl(), std::move(wrapper));
+      case RWState::RWNONE:
+	return seastar::futurize_invoke(std::move(wrapper));
+      default:
+	assert(0 == "noop");
+      }
+    } else {
+      switch (Type) {
+      case RWState::RWWRITE:
+	return _with_lock(lock.for_write(), std::forward<Func>(func));
+      case RWState::RWREAD:
+	return _with_lock(lock.for_read(), std::forward<Func>(func));
+      case RWState::RWEXCL:
+	return _with_lock(lock.for_excl(), std::forward<Func>(func));
+      case RWState::RWNONE:
+	return seastar::futurize_invoke(std::forward<Func>(func));
+      default:
+	assert(0 == "noop");
+      }
+    }
+  }
+  template<RWState::State Type, typename InterruptCond = void, typename Func>
   auto with_promoted_lock(Func&& func) {
-    switch (Type) {
-    case RWState::RWWRITE:
-      return _with_lock(lock.excl_from_write(), std::forward<Func>(func));
-    case RWState::RWREAD:
-      return _with_lock(lock.excl_from_read(), std::forward<Func>(func));
-    case RWState::RWEXCL:
-      return _with_lock(lock.excl_from_excl(), std::forward<Func>(func));
-     default:
-      assert(0 == "noop");
+    if constexpr (!std::is_void_v<InterruptCond>) {
+      auto wrapper = ::crimson::interruptible::interruptor<InterruptCond>::wrap_function(std::forward<Func>(func));
+      switch (Type) {
+      case RWState::RWWRITE:
+	return _with_lock(lock.excl_from_write(), std::move(wrapper));
+      case RWState::RWREAD:
+	return _with_lock(lock.excl_from_read(), std::move(wrapper));
+      case RWState::RWEXCL:
+	return _with_lock(lock.excl_from_excl(), std::move(wrapper));
+      case RWState::RWNONE:
+	return _with_lock(lock.for_excl(), std::move(wrapper));
+       default:
+	assert(0 == "noop");
+      }
+    } else {
+      switch (Type) {
+      case RWState::RWWRITE:
+	return _with_lock(lock.excl_from_write(), std::forward<Func>(func));
+      case RWState::RWREAD:
+	return _with_lock(lock.excl_from_read(), std::forward<Func>(func));
+      case RWState::RWEXCL:
+	return _with_lock(lock.excl_from_excl(), std::forward<Func>(func));
+      case RWState::RWNONE:
+	return _with_lock(lock.for_excl(), std::forward<Func>(func));
+       default:
+	assert(0 == "noop");
+      }
     }
   }
 
@@ -156,13 +197,6 @@ public:
   }
   bool is_request_pending() const {
     return lock.is_acquired();
-  }
-
-  template <typename F>
-  seastar::future<> get_write_greedy(Operation *op) {
-    return get_lock(op, [this] {
-      return lock.lock_for_write(true);
-    });
   }
 
   bool get_recovery_read() {
@@ -174,11 +208,11 @@ public:
     }
   }
   void wait_recovery_read() {
+    assert(lock.get_readers() > 0);
     recovery_read_marker = true;
   }
   void drop_recovery_read() {
     assert(recovery_read_marker);
-    lock.unlock_for_read();
     recovery_read_marker = false;
   }
   bool maybe_get_excl() {

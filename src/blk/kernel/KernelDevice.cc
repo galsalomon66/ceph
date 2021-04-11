@@ -12,6 +12,7 @@
  *
  */
 
+#include <limits>
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -647,7 +648,6 @@ void KernelDevice::_aio_thread()
 	}
       }
     }
-    reap_ioc();
     if (cct->_conf->bdev_inject_crash) {
       ++inject_crash_count;
       if (inject_crash_count * cct->_conf->bdev_aio_poll_ms / 1000 >
@@ -659,7 +659,6 @@ void KernelDevice::_aio_thread()
       }
     }
   }
-  reap_ioc();
   dout(10) << __func__ << " end" << dendl;
 }
 
@@ -813,6 +812,8 @@ void KernelDevice::aio_submit(IOContext *ioc)
 
   void *priv = static_cast<void*>(ioc);
   int r, retries = 0;
+  // num of pending aios should not overflow when passed to submit_batch()
+  assert(pending <= std::numeric_limits<uint16_t>::max());
   r = io_queue->submit_batch(ioc->running_aios.begin(), e,
 			     pending, priv, &retries);
 
@@ -955,8 +956,8 @@ int KernelDevice::aio_write(
       ioc->pending_aios.push_back(aio_t(ioc, choose_fd(false, write_hint)));
       ++ioc->num_pending;
       auto& aio = ioc->pending_aios.back();
-      bufferptr p = ceph::buffer::create_small_page_aligned(len);
-      aio.bl.append(std::move(p));
+      aio.bl.push_back(
+        ceph::buffer::ptr_node::create(ceph::buffer::create_small_page_aligned(len)));
       aio.bl.prepare_iov(&aio.iov);
       aio.preadv(off, len);
       ++injecting_crash;
@@ -1089,8 +1090,8 @@ int KernelDevice::aio_read(
     ioc->pending_aios.push_back(aio_t(ioc, fd_directs[WRITE_LIFE_NOT_SET]));
     ++ioc->num_pending;
     aio_t& aio = ioc->pending_aios.back();
-    bufferptr p = ceph::buffer::create_small_page_aligned(len);
-    aio.bl.append(std::move(p));
+    aio.bl.push_back(
+      ceph::buffer::ptr_node::create(ceph::buffer::create_small_page_aligned(len)));
     aio.bl.prepare_iov(&aio.iov);
     aio.preadv(off, len);
     dout(30) << aio << dendl;

@@ -217,11 +217,11 @@ void ImageDispatcher<I>::shut_down(Context* on_finish) {
       delete async_op;
       on_finish->complete(0);
     });
-  on_finish = new LambdaContext([this, async_op, on_finish](int r) {
-      async_op->start_op(*this->m_image_ctx);
-      async_op->flush(on_finish);
+  on_finish = new LambdaContext([this, on_finish](int r) {
+      Dispatcher<I, ImageDispatcherInterface>::shut_down(on_finish);
     });
-  Dispatcher<I, ImageDispatcherInterface>::shut_down(on_finish);
+  async_op->start_op(*this->m_image_ctx);
+  async_op->flush(on_finish);
 }
 
 template <typename I>
@@ -233,6 +233,11 @@ template <typename I>
 void ImageDispatcher<I>::apply_qos_limit(uint64_t flag, uint64_t limit,
                                          uint64_t burst, uint64_t burst_seconds) {
   m_qos_image_dispatch->apply_qos_limit(flag, limit, burst, burst_seconds);
+}
+
+template <typename I>
+void ImageDispatcher<I>::apply_qos_exclude_ops(uint64_t exclude_ops) {
+  m_qos_image_dispatch->apply_qos_exclude_ops(exclude_ops);
 }
 
 template <typename I>
@@ -261,13 +266,13 @@ void ImageDispatcher<I>::wait_on_writes_unblocked(Context *on_unblocked) {
 }
 
 template <typename I>
-void ImageDispatcher<I>::remap_extents(Extents&& image_extents,
+void ImageDispatcher<I>::remap_extents(Extents& image_extents,
                                        ImageExtentsMapType type) {
   auto loop = [&image_extents, type](auto begin, auto end) {
       for (auto it = begin; it != end; ++it) {
         auto& image_dispatch_meta = it->second;
         auto image_dispatch = image_dispatch_meta.dispatch;
-        image_dispatch->remap_extents(std::move(image_extents), type);
+        image_dispatch->remap_extents(image_extents, type);
       }
   };
 

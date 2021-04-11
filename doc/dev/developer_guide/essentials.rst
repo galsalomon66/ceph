@@ -22,7 +22,7 @@ RGW       Yehuda Sadeh     yehudasa
 RGW       Matt Benjamin    mattbenjamin
 RBD       Jason Dillaman   dillaman
 CephFS    Patrick Donnelly batrick
-Dashboard Lenz Grimmer     LenzGr
+Dashboard Ernesto Puerta   epuertat
 MON       Joao Luis        jecluis
 Build/Ops Ken Dreyer       ktdreyer
 Docs      Zac Dover        zdover23
@@ -180,7 +180,7 @@ Cleaning the Source Tree
 
 .. prompt:: bash $
 
-  make clean
+  ninja clean
   
 .. note:: The following commands will remove everything in the source tree 
           that isn't tracked by git. Make sure to back up your log files 

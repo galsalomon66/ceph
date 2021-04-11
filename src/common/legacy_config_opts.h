@@ -131,7 +131,6 @@ OPTION(ms_pq_max_tokens_per_priority, OPT_U64)
 OPTION(ms_pq_min_cost, OPT_U64)
 OPTION(ms_inject_socket_failures, OPT_U64)
 SAFE_OPTION(ms_inject_delay_type, OPT_STR)          // "osd mds mon client" allowed
-OPTION(ms_inject_delay_msg_type, OPT_STR)      // the type of message to delay). This is an additional restriction on the general type filter ms_inject_delay_type.
 OPTION(ms_inject_delay_max, OPT_DOUBLE)         // seconds
 OPTION(ms_inject_delay_probability, OPT_DOUBLE) // range [0, 1]
 OPTION(ms_inject_internal_delays, OPT_DOUBLE)   // seconds
@@ -143,7 +142,6 @@ OPTION(ms_blackhole_client, OPT_BOOL)
 OPTION(ms_dump_on_send, OPT_BOOL)           // hexdump msg to log on send
 OPTION(ms_dump_corrupt_message_level, OPT_INT)  // debug level to hexdump undecodeable messages at
 OPTION(ms_async_op_threads, OPT_U64)            // number of worker processing threads for async messenger created on init
-OPTION(ms_async_max_op_threads, OPT_U64)        // max number of worker processing threads for async messenger
 OPTION(ms_async_rdma_device_name, OPT_STR)
 OPTION(ms_async_rdma_enable_hugepage, OPT_BOOL)
 OPTION(ms_async_rdma_buffer_size, OPT_INT)
@@ -269,7 +267,6 @@ OPTION(mon_data_avail_warn, OPT_INT)
 OPTION(mon_data_size_warn, OPT_U64) // issue a warning when the monitor's data store goes over 15GB (in bytes)
 OPTION(mon_warn_pg_not_scrubbed_ratio, OPT_FLOAT)
 OPTION(mon_warn_pg_not_deep_scrubbed_ratio, OPT_FLOAT)
-OPTION(mon_scrub_interval, OPT_INT) // once a day
 OPTION(mon_scrub_timeout, OPT_INT) // let's give it 5 minutes; why not.
 OPTION(mon_scrub_max_keys, OPT_INT) // max number of keys to scrub each time
 OPTION(mon_scrub_inject_crc_mismatch, OPT_DOUBLE) // probability of injected crc mismatch [0.0, 1.0]
@@ -595,7 +592,7 @@ OPTION(osd_objecter_finishers, OPT_INT)
 OPTION(osd_map_dedup, OPT_BOOL)
 OPTION(osd_map_cache_size, OPT_INT)
 OPTION(osd_map_message_max, OPT_INT)  // max maps per MOSDMap message
-OPTION(osd_map_message_max_bytes, OPT_SIZE)  // max maps per MOSDMap message
+OPTION(osd_map_message_max_bytes, OPT_SIZE)  // max bytes of maps per MOSDMap message
 OPTION(osd_map_share_max_epochs, OPT_INT)  // cap on # of inc maps we send to peers, clients
 OPTION(osd_inject_bad_map_crc_probability, OPT_FLOAT)
 OPTION(osd_inject_failure_on_pg_removal, OPT_BOOL)
@@ -667,9 +664,6 @@ OPTION(osd_mon_report_interval, OPT_INT)  // failures, up_thru, boot.
 OPTION(osd_mon_report_max_in_flight, OPT_INT)  // max updates in flight
 OPTION(osd_beacon_report_interval, OPT_INT)       // (second) how often to send beacon message to monitor
 OPTION(osd_pg_stat_report_interval_max, OPT_INT)  // report pg stats for any given pg at least this often
-OPTION(osd_mon_ack_timeout, OPT_DOUBLE) // time out a mon if it doesn't ack stats
-OPTION(osd_stats_ack_timeout_factor, OPT_DOUBLE) // multiples of mon_ack_timeout
-OPTION(osd_stats_ack_timeout_decay, OPT_DOUBLE)
 OPTION(osd_default_data_pool_replay_window, OPT_INT)
 OPTION(osd_auto_mark_unfound_lost, OPT_BOOL)
 OPTION(osd_recovery_delay_start, OPT_FLOAT)
@@ -765,6 +759,7 @@ OPTION(osd_op_history_slow_op_threshold, OPT_DOUBLE) // track the op if over thi
 OPTION(osd_target_transaction_size, OPT_INT)     // to adjust various transactions that batch smaller items
 OPTION(osd_failsafe_full_ratio, OPT_FLOAT) // what % full makes an OSD "full" (failsafe)
 OPTION(osd_fast_shutdown, OPT_BOOL)
+OPTION(osd_fast_shutdown_notify_mon, OPT_BOOL) // tell mon the OSD is shutting down on osd_fast_shutdown
 OPTION(osd_fast_fail_on_connection_refused, OPT_BOOL) // immediately mark OSDs as down once they refuse to accept connections
 
 OPTION(osd_pg_object_context_cache_count, OPT_INT)
@@ -914,6 +909,7 @@ OPTION(bluefs_allocator, OPT_STR)     // stupid | bitmap
 OPTION(bluefs_log_replay_check_allocations, OPT_BOOL)
 OPTION(bluefs_replay_recovery, OPT_BOOL)
 OPTION(bluefs_replay_recovery_disable_compact, OPT_BOOL)
+OPTION(bluefs_check_for_zeros, OPT_BOOL)
 
 OPTION(bluestore_bluefs, OPT_BOOL)
 OPTION(bluestore_bluefs_env_mirror, OPT_BOOL) // mirror to normal Env for debug
@@ -1000,6 +996,7 @@ OPTION(bluestore_bitmapallocator_span_size, OPT_INT) // must be power of 2 align
 OPTION(bluestore_max_deferred_txc, OPT_U64)
 OPTION(bluestore_max_defer_interval, OPT_U64)
 OPTION(bluestore_rocksdb_options, OPT_STR)
+OPTION(bluestore_rocksdb_options_annex, OPT_STR)
 OPTION(bluestore_fsck_on_mount, OPT_BOOL)
 OPTION(bluestore_fsck_on_mount_deep, OPT_BOOL)
 OPTION(bluestore_fsck_quick_fix_on_mount, OPT_BOOL)
@@ -1043,7 +1040,9 @@ OPTION(bluestore_warn_on_bluefs_spillover, OPT_BOOL)
 OPTION(bluestore_warn_on_legacy_statfs, OPT_BOOL)
 OPTION(bluestore_warn_on_spurious_read_errors, OPT_BOOL)
 OPTION(bluestore_fsck_error_on_no_per_pool_omap, OPT_BOOL)
+OPTION(bluestore_fsck_error_on_no_per_pg_omap, OPT_BOOL)
 OPTION(bluestore_warn_on_no_per_pool_omap, OPT_BOOL)
+OPTION(bluestore_warn_on_no_per_pg_omap, OPT_BOOL)
 OPTION(bluestore_log_op_age, OPT_DOUBLE)
 OPTION(bluestore_log_omap_iterator_age, OPT_DOUBLE)
 OPTION(bluestore_log_collection_list_age, OPT_DOUBLE)
@@ -1051,6 +1050,7 @@ OPTION(bluestore_debug_enforce_settings, OPT_STR)
 OPTION(bluestore_volume_selection_policy, OPT_STR)
 OPTION(bluestore_volume_selection_reserved_factor, OPT_DOUBLE)
 OPTION(bluestore_volume_selection_reserved, OPT_INT)
+OPTION(bluestore_kv_sync_util_logging_s, OPT_DOUBLE)
 
 OPTION(kstore_max_ops, OPT_U64)
 OPTION(kstore_max_bytes, OPT_U64)
@@ -1426,6 +1426,7 @@ OPTION(rgw_relaxed_s3_bucket_names, OPT_BOOL) // enable relaxed bucket name rule
 OPTION(rgw_defer_to_bucket_acls, OPT_STR) // if the user has bucket perms)
 OPTION(rgw_list_buckets_max_chunk, OPT_INT) // max buckets to retrieve in a single op when listing user buckets
 OPTION(rgw_md_log_max_shards, OPT_INT) // max shards for metadata log
+OPTION(rgw_curl_buffersize, OPT_INT) // set preferred receive buffer size for curl calls
 OPTION(rgw_curl_wait_timeout_ms, OPT_INT) // timeout for certain curl calls
 OPTION(rgw_curl_low_speed_limit, OPT_INT) // low speed limit for certain curl calls
 OPTION(rgw_curl_low_speed_time, OPT_INT) // low speed time for certain curl calls
@@ -1505,6 +1506,15 @@ OPTION(rgw_crypt_vault_addr, OPT_STR) // Vault server base address
 OPTION(rgw_crypt_vault_prefix, OPT_STR) // Optional URL prefix to Vault secret path
 OPTION(rgw_crypt_vault_secret_engine, OPT_STR) // kv, transit or other supported secret engines
 OPTION(rgw_crypt_vault_namespace, OPT_STR) // Vault Namespace (only availabe in Vault Enterprise Version)
+
+OPTION(rgw_crypt_kmip_addr, OPT_STR) // kmip server address
+OPTION(rgw_crypt_kmip_ca_path, OPT_STR) // ca for kmip servers
+OPTION(rgw_crypt_kmip_username, OPT_STR) // when authenticating via username
+OPTION(rgw_crypt_kmip_password, OPT_STR) // optional w/ username
+OPTION(rgw_crypt_kmip_client_cert, OPT_STR) // connect using client certificate
+OPTION(rgw_crypt_kmip_client_key, OPT_STR) // connect using client certificate
+OPTION(rgw_crypt_kmip_kms_key_template, OPT_STR) // sse-kms; kmip key names
+OPTION(rgw_crypt_kmip_s3_key_template, OPT_STR) // sse-s3; kmip key names
 
 OPTION(rgw_crypt_s3_kms_encryption_keys, OPT_STR) // extra keys that may be used for aws:kms
                                                       // defined as map "key1=YmluCmJvb3N0CmJvb3N0LQ== key2=b3V0CnNyYwpUZXN0aW5nCg=="

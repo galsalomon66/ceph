@@ -1,9 +1,10 @@
 
 from mgr_module import MgrModule, CommandResult
-import threading
-import random
-import json
 import errno
+import json
+import random
+import sys
+import threading
 
 
 class Module(MgrModule):
@@ -38,7 +39,8 @@ class Module(MgrModule):
         {'name': 'rwoption3', 'type': 'float'},
         {'name': 'rwoption4', 'type': 'str'},
         {'name': 'rwoption5', 'type': 'bool'},
-        {'name': 'rwoption6', 'type': 'bool', 'default': True}
+        {'name': 'rwoption6', 'type': 'bool', 'default': True},
+        {'name': 'rwoption7', 'type': 'int', 'min': 1, 'max': 42},
     ]
 
     COMMANDS = [
@@ -100,6 +102,11 @@ class Module(MgrModule):
                 "desc": "Create an audit log record.",
                 "perm": "rw"
             },
+            {
+                "cmd": "mgr self-test python-version",
+                "desc": "Query the version of the embedded Python runtime",
+                "perm": "r"
+            },
             ]
 
     def __init__(self, *args, **kwargs):
@@ -109,7 +116,13 @@ class Module(MgrModule):
         self._health = {}
 
     def handle_command(self, inbuf, command):
-        if command['prefix'] == 'mgr self-test run':
+        if command['prefix'] == 'mgr self-test python-version':
+            major = sys.version_info.major
+            minor = sys.version_info.minor
+            micro = sys.version_info.micro
+            return 0, f'{major}.{minor}.{micro}', ''
+
+        elif command['prefix'] == 'mgr self-test run':
             self._self_test()
             return 0, '', 'Self-test succeeded'
 
@@ -152,10 +165,10 @@ class Module(MgrModule):
             return self._insights_set_now_offset(inbuf, command)
         elif command['prefix'] == 'mgr self-test cluster-log':
             priority_map = {
-                'info': self.CLUSTER_LOG_PRIO_INFO,
-                'security': self.CLUSTER_LOG_PRIO_SEC,
-                'warning': self.CLUSTER_LOG_PRIO_WARN,
-                'error': self.CLUSTER_LOG_PRIO_ERROR
+                'info': self.ClusterLogPrio.INFO,
+                'security': self.ClusterLogPrio.SEC,
+                'warning': self.ClusterLogPrio.WARN,
+                'error': self.ClusterLogPrio.ERROR
             }
             self.cluster_log(command['channel'],
                              priority_map[command['priority']],
@@ -313,6 +326,15 @@ class Module(MgrModule):
         assert isinstance(value, bool)
         assert value is False
 
+        # Option value range is specified
+        try:
+            self.set_module_option("rwoption7", 43)
+        except Exception as e:
+            assert isinstance(e, ValueError)
+        else:
+            message = "should raise if value is not in specified range"
+            assert False, message
+
         # Specified module does not exist => return None.
         assert self.get_module_option_ex("foo", "bar") is None
 
@@ -392,7 +414,7 @@ class Module(MgrModule):
 
     def _test_remote_calls(self):
         # Test making valid call
-        self.remote("influx", "handle_command", "", {"prefix": "influx self-test"})
+        self.remote("influx", "self_test")
 
         # Test calling module that exists but isn't enabled
         # (arbitrarily pick a non-always-on module to use)
@@ -413,7 +435,7 @@ class Module(MgrModule):
 
         # Test calling module that doesn't exist
         try:
-            self.remote("idontexist", "handle_command", {"prefix": "influx self-test"})
+            self.remote("idontexist", "self_test")
         except ImportError:
             pass
         else:
@@ -421,7 +443,7 @@ class Module(MgrModule):
 
         # Test calling method that doesn't exist
         try:
-            self.remote("influx", "idontexist", {"prefix": "influx self-test"})
+            self.remote("influx", "idontexist")
         except NameError:
             pass
         else:
@@ -430,12 +452,10 @@ class Module(MgrModule):
     def remote_from_orchestrator_cli_self_test(self, what):
         import orchestrator
         if what == 'OrchestratorError':
-            c = orchestrator.TrivialReadCompletion(result=None)
-            c.fail(orchestrator.OrchestratorError('hello, world'))
+            c = orchestrator.OrchResult(result=None, exception=orchestrator.OrchestratorError('hello, world'))
             return c
         elif what == "ZeroDivisionError":
-            c = orchestrator.TrivialReadCompletion(result=None)
-            c.fail(ZeroDivisionError('hello, world'))
+            c = orchestrator.OrchResult(result=None, exception=ZeroDivisionError('hello, world'))
             return c
         assert False, repr(what)
 

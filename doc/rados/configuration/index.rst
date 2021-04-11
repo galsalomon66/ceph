@@ -2,7 +2,7 @@
  Configuration
 ===============
 
-Each Ceph process, daemon or utility draws its configuration from
+Each Ceph process, daemon, or utility draws its configuration from
 several sources on startup, include a local configuration, the
 monitors, the command line, or environment variables.  Configuration
 options may be set globally such that they apply to all daemons, to
@@ -39,6 +39,7 @@ To optimize the performance of your cluster, refer to the following:
    mon-lookup-dns
    Heartbeat Settings <mon-osd-interaction>
    OSD Settings <osd-config-ref>
+   DmClock Settings <mclock-config-ref>
    BlueStore Settings <bluestore-config-ref>
    FileStore Settings <filestore-config-ref>
    Journal Settings <journal-ref>

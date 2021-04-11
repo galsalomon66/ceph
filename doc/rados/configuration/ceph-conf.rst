@@ -4,22 +4,26 @@
  Configuring Ceph
 ==================
 
-When you start the Ceph service, the initialization process activates a series
+When Ceph services start, the initialization process activates a series
 of daemons that run in the background. A :term:`Ceph Storage Cluster` runs 
-three types of daemons:
+at a minimum three types of daemons:
 
 - :term:`Ceph Monitor` (``ceph-mon``)
 - :term:`Ceph Manager` (``ceph-mgr``)
 - :term:`Ceph OSD Daemon` (``ceph-osd``)
 
-Ceph Storage Clusters that support the :term:`Ceph File System` run at
+Ceph Storage Clusters that support the :term:`Ceph File System` also run at
 least one :term:`Ceph Metadata Server` (``ceph-mds``). Clusters that
-support :term:`Ceph Object Storage` run Ceph Gateway daemons
-(``radosgw``).
+support :term:`Ceph Object Storage` run Ceph RADOS Gateway daemons
+(``radosgw``) as well.
 
-Each daemon has a series of configuration options, each of which has a
-default values.  You may adjust the behavior of the system by changing these
-configuration options.
+Each daemon has a number of configuration options, each of which has a
+default value.  You may adjust the behavior of the system by changing these
+configuration options.  Be careful to understand the consequences before
+overriding default values, as it is possible to significantly degrade the
+performance and stability of your cluster.  Also note that default values
+sometimes change between releases, so it is best to review the version of
+this documentation that aligns with your Ceph release.
 
 Option names
 ============
@@ -33,7 +37,9 @@ When option names are specified on the command line, either underscore
 ``--mon-host`` is equivalent to ``--mon_host``).
 
 When option names appear in configuration files, spaces can also be
-used in place of underscore or dash.
+used in place of underscore or dash.  We suggest, though, that for
+clarity and convenience you consistently use underscores, as we do
+throughout this documentation.
 
 Config sources
 ==============
@@ -72,7 +78,7 @@ in a local configuration file.  These options include:
     Ceph cluster.  This overrides the known monitor list derived from MonMap
     updates sent to older Ceph instances (like librados cluster handles).  It is
     expected this option is primarily useful for debugging.
-  - ``mon_dns_serv_name`` (default: `ceph-mon`), the name of the DNS
+  - ``mon_dns_srv_name`` (default: `ceph-mon`), the name of the DNS
     SRV record to check to identify the cluster monitors via DNS
   - ``mon_data``, ``osd_data``, ``mds_data``, ``mgr_data``, and
     similar options that define which local directory the daemon
@@ -113,53 +119,52 @@ they apply to.
 
 These sections include:
 
-``global``
+.. confval:: global
 
-:Description: Settings under ``global`` affect all daemons and clients
-              in a Ceph Storage Cluster.
+   Settings under ``global`` affect all daemons and clients
+   in a Ceph Storage Cluster.
 
-:Example: ``log_file = /var/log/ceph/$cluster-$type.$id.log``
+   :example: ``log_file = /var/log/ceph/$cluster-$type.$id.log``
 
-``mon``
+.. confval:: mon
 
-:Description: Settings under ``mon`` affect all ``ceph-mon`` daemons in
-              the Ceph Storage Cluster, and override the same setting in 
-              ``global``.
+   Settings under ``mon`` affect all ``ceph-mon`` daemons in
+   the Ceph Storage Cluster, and override the same setting in
+   ``global``.
 
-:Example: ``mon_cluster_log_to_syslog = true``
+   :example: ``mon_cluster_log_to_syslog = true``
 
+.. confval:: mgr
 
-``mgr``
+   Settings in the ``mgr`` section affect all ``ceph-mgr`` daemons in
+   the Ceph Storage Cluster, and override the same setting in
+   ``global``.
 
-:Description: Settings in the ``mgr`` section affect all ``ceph-mgr`` daemons in
-              the Ceph Storage Cluster, and override the same setting in 
-              ``global``.
+   :example: ``mgr_stats_period = 10``
 
-:Example: ``mgr_stats_period = 10``
+.. confval:: osd
 
-``osd``
+   Settings under ``osd`` affect all ``ceph-osd`` daemons in
+   the Ceph Storage Cluster, and override the same setting in
+   ``global``.
 
-:Description: Settings under ``osd`` affect all ``ceph-osd`` daemons in
-              the Ceph Storage Cluster, and override the same setting in
-              ``global``.
+   :example: ``osd_op_queue = wpq``
 
-:Example: ``osd_op_queue = wpq``
+.. confval:: mds
 
-``mds``
+   Settings in the ``mds`` section affect all ``ceph-mds`` daemons in
+   the Ceph Storage Cluster, and override the same setting in
+   ``global``.
 
-:Description: Settings in the ``mds`` section affect all ``ceph-mds`` daemons in
-              the Ceph Storage Cluster, and override the same setting in
-              ``global``.
+   :example: ``mds_cache_memory_limit = 10G``
 
-:Example: ``mds_cache_memory_limit = 10G``
+.. confval:: client
 
-``client``
+   Settings under ``client`` affect all Ceph Clients
+   (e.g., mounted Ceph File Systems, mounted Ceph Block Devices,
+   etc.) as well as Rados Gateway (RGW) daemons.
 
-:Description: Settings under ``client`` affect all Ceph Clients
-              (e.g., mounted Ceph File Systems, mounted Ceph Block Devices,
-              etc.) as well as Rados Gateway (RGW) daemons.
-
-:Example: ``objecter_inflight_ops = 512``
+   :example: ``objecter_inflight_ops = 512``
 
 
 Sections may also specify an individual daemon or client name.  For example,
@@ -193,45 +198,43 @@ configuration value is used. Ceph metavariables are similar to variable expansio
 
 Ceph supports the following metavariables: 
 
-``$cluster``
+.. confval:: $cluster
 
-:Description: Expands to the Ceph Storage Cluster name. Useful when running 
-              multiple Ceph Storage Clusters on the same hardware.
+   Expands to the Ceph Storage Cluster name. Useful when running
+   multiple Ceph Storage Clusters on the same hardware.
 
-:Example: ``/etc/ceph/$cluster.keyring``
-:Default: ``ceph``
+   :example: ``/etc/ceph/$cluster.keyring``
+   :default: ``ceph``
 
+.. confval:: $type
 
-``$type``
+   Expands to a daemon or process type (e.g., ``mds``, ``osd``, or ``mon``)
 
-:Description: Expands to a daemon or process type (e.g., ``mds``, ``osd``, or ``mon``)
+   :example: ``/var/lib/ceph/$type``
 
-:Example: ``/var/lib/ceph/$type``
+.. confval:: $id
 
+   Expands to the daemon or client identifier. For
+   ``osd.0``, this would be ``0``; for ``mds.a``, it would
+   be ``a``.
 
-``$id``
+   :example: ``/var/lib/ceph/$type/$cluster-$id``
 
-:Description: Expands to the daemon or client identifier. For
-              ``osd.0``, this would be ``0``; for ``mds.a``, it would
-              be ``a``.
+.. confval:: $host
 
-:Example: ``/var/lib/ceph/$type/$cluster-$id``
+   Expands to the host name where the process is running.
 
+.. confval:: $name
 
-``$host``
+   Expands to ``$type.$id``.
 
-:Description: Expands to the host name where the process is running.
+   :example: ``/var/run/ceph/$cluster-$name.asok``
 
+.. confval:: $pid
 
-``$name``
+   Expands to daemon pid.
 
-:Description: Expands to ``$type.$id``.
-:Example: ``/var/run/ceph/$cluster-$name.asok``
-
-``$pid``
-
-:Description: Expands to daemon pid.
-:Example: ``/var/run/ceph/$cluster-$name-$pid.asok``
+   :example: ``/var/run/ceph/$cluster-$name-$pid.asok``
 
 
 
@@ -251,8 +254,8 @@ following locations:
 
 where ``$cluster`` is the cluster's name (default ``ceph``).
 
-The Ceph configuration file uses an *ini* style syntax. You can add comments
-by preceding comments with a pound sign (#) or a semi-colon (;).  For example:
+The Ceph configuration file uses an *ini* style syntax. You can add comment
+text after a pound sign (#) or a semi-colon (;).  For example:
 
 .. code-block:: ini
 
@@ -275,16 +278,16 @@ surrounded by square brackets. For example,
 .. code-block:: ini
 
 	[global]
-	debug ms = 0
+	debug_ms = 0
 	
 	[osd]
-	debug ms = 1
+	debug_ms = 1
 
 	[osd.1]
-	debug ms = 10
+	debug_ms = 10
 
 	[osd.2]
-	debug ms = 10
+	debug_ms = 10
 
 
 Config file option values
@@ -307,8 +310,8 @@ Normally, the option value ends with a new line, or a comment, like
 .. code-block:: ini
 
     [global]
-    obscure one = difficult to explain # I will try harder in next release
-    simpler one = nothing to explain
+    obscure_one = difficult to explain # I will try harder in next release
+    simpler_one = nothing to explain
 
 In the example above, the value of "``obscure one``" would be "``difficult to explain``";
 and the value of "``simpler one`` would be "``nothing to explain``".
@@ -611,31 +614,35 @@ will report the value of a single option.
 
 
 
-Changes since nautilus
+Changes since Nautilus
 ======================
 
-We changed the way the configuration file is parsed in Octopus. The changes are
-listed as follows:
+With the Octopus release We changed the way the configuration file is parsed.
+These changes are as follows:
 
-- repeated configuration options are allowed, and no warnings will be printed.
-  The value of the last one wins. Before this change, we would print out warning
-  messages at seeing lines with duplicated values, like::
+- Repeated configuration options are allowed, and no warnings will be printed.
+  The value of the last one is used, which means that the setting last in the file
+  is the one that takes effect. Before this change, we would print warning messages
+  when lines with duplicated options were encountered, like::
 
     warning line 42: 'foo' in section 'bar' redefined
-- invalid UTF-8 options are ignored with warning messages. But since Octopus,
+
+- Invalid UTF-8 options were ignored with warning messages. But since Octopus,
   they are treated as fatal errors.
-- backslash ``\`` is used as the line continuation marker to combine the next
-  line with current one. Before Octopus, it was required to follow backslash with
-  non-empty line. But in Octopus, empty line following backslash is now allowed.
+
+- Backslash ``\`` is used as the line continuation marker to combine the next
+  line with current one. Before Octopus, it was required to follow a backslash with
+  a non-empty line. But in Octopus, an empty line following a backslash is now allowed.
+
 - In the configuration file, each line specifies an individual configuration
-  option. The option's name and its value are separated with ``=``. And the
-  value can be quoted using single or double quotes. But if an invalid
+  option. The option's name and its value are separated with ``=``, and the
+  value may be quoted using single or double quotes. If an invalid
   configuration is specified, we will treat it as an invalid configuration
   file ::
 
     bad option ==== bad value
-- Before Octopus, if no section name was specified in the configuration file,
-  all options would be grouped into the section of ``global``. But this is
-  discouraged now. Since Octopus, only a single option is allowed for
-  configuration files without a section name.
 
+- Before Octopus, if no section name was specified in the configuration file,
+  all options would be set as though they were within the ``global`` section. This is
+  now discouraged. Since Octopus, only a single option is allowed for
+  configuration files without a section name.
