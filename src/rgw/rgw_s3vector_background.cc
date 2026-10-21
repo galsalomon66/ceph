@@ -614,6 +614,20 @@ private:
                            const std::string& vector_bucket_name,
                            std::unique_ptr<rgw::sal::Bucket>& bucket,
                            optional_yield y) {
+    // KNOWN LIMITATION (storage mode): the distributed lock object is stored in
+    // a regular RGW bucket loaded here via load_bucket(). This only works in
+    // S3_BUCKET storage mode (rgw_s3vector_data_s3_bucket=true), where a
+    // same-name regular S3 bucket exists alongside the vector bucket. In the
+    // DEFAULT VECTOR_BUCKET mode (rgw_s3vector_data_s3_bucket=false) the LanceDB
+    // data lives inside the vector bucket itself and there is no regular bucket
+    // of this name, so load_bucket() returns -ENOENT; try_acquire_lock() then
+    // returns an empty token and every rebuild is skipped, logged misleadingly
+    // as "lock held by another process". Net effect: background index rebuild
+    // never runs in the default storage mode.
+    // TODO: make this storage-mode aware -- in VECTOR_BUCKET mode load the
+    // vector bucket via driver->load_vector_bucket() (keyed by ns.name()) and
+    // store the lock object there (VectorBucket is an alias of Bucket, so it
+    // supports the same object ops used by the lock protocol).
     rgw_bucket bucket_id;
     bucket_id.tenant = tenant;  // scope the lock object to the owning tenant
     bucket_id.name = vector_bucket_name;
