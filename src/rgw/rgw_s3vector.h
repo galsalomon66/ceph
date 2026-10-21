@@ -455,6 +455,7 @@ struct get_index_reply_t {
 struct get_index_stats_t {
   std::string index_name;
   std::string vector_bucket_name;
+  boost::optional<rgw::ARN> index_arn;
 
   void dump(ceph::Formatter* f) const;
   void decode_json(JSONObj* obj);
@@ -468,7 +469,7 @@ struct get_index_stats_reply_t {
   void dump(ceph::Formatter* f) const;
 };
 
-int get_index_stats(const get_index_stats_t& configuration, rgw::sal::Driver* driver, const rgw::sal::User* user, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y, get_index_stats_reply_t& reply);
+int get_index_stats(const VectorBucketConfig<get_index_stats_t>& operation, rgw::sal::Driver* driver, const rgw::sal::User* user, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y, get_index_stats_reply_t& reply);
 
 /*
   {
